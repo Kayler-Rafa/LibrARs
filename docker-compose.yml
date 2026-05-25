@@ -1,0 +1,76 @@
+version: '3.9'
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Libras AR — Docker Compose (desenvolvimento local)
+#
+#  Uso:
+#    cp .env.example .env          # preencha as variáveis
+#    docker compose up --build     # sobe tudo com hot-reload
+#
+#  Serviços:
+#    postgres   → :5432
+#    backend    → :3001   (Node.js + Express + Socket.io)
+#    frontend   → :5173   (Vite + React)
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: libras_ar
+      POSTGRES_USER: libras
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-libras_dev_pw}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/db/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U libras -d libras_ar"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # ── Backend API + WebSocket ─────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://libras:${POSTGRES_PASSWORD:-libras_dev_pw}@postgres:5432/libras_ar
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-in-production}
+      CORS_ORIGIN: http://localhost:5173
+      PORT: 3001
+    volumes:
+      - ./backend:/app
+      - backend_node_modules:/app/node_modules
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── Frontend Vite ───────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend.dev
+    restart: unless-stopped
+    environment:
+      VITE_API_URL: http://localhost:3001
+      VITE_WS_URL: http://localhost:3001
+    volumes:
+      - .:/app
+      - frontend_node_modules:/app/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  backend_node_modules:
+  frontend_node_modules:
