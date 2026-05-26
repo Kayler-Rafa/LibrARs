@@ -34,8 +34,8 @@ services:
   # -- Backend API + WebSocket --------------------------------------------------
   backend:
     build:
-      context: ./apps/backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/backend/Dockerfile
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-libras}:${POSTGRES_PASSWORD:-libras_dev_pw}@postgres:5432/${POSTGRES_DB:-libras_ar}
