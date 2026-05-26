@@ -13,7 +13,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       JWT_SECRET: ${JWT_SECRET}
-      CORS_ORIGIN: ${CORS_ORIGIN}
+      CORS_ORIGIN: ${SERVICE_URL_FRONTEND:-http://localhost:5173}
       PORT: 3001
     expose:
       - "3001"
