@@ -1,0 +1,65 @@
+# =============================================================================
+#  Libras AR -- Docker Compose (PRODUCAO / Coolify)
+#
+#  Para desenvolvimento local com hot-reload, use:
+#    docker compose -f docker-compose.dev.yml up --build
+#
+#  Servicos:
+#    postgres   -> interno (nao exposto externamente)
+#    backend    -> :3001
+#    frontend   -> :80  (nginx -- proxy /api/ e /socket.io/ para o backend)
+# =============================================================================
+
+services:
+  # -- PostgreSQL ---------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-libras_ar}
+      POSTGRES_USER: ${POSTGRES_USER:-libras}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-libras_dev_pw}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./apps/backend/db/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    healthcheck:
+      # -U especifica o usuario correto; sem isso pg_isready conecta como "root"
+      # (usuario do OS no container) que nao existe no banco -> FATAL -> unhealthy
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U ${POSTGRES_USER:-libras} -d ${POSTGRES_DB:-libras_ar}"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+
+  # -- Backend API + WebSocket --------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-libras}:${POSTGRES_PASSWORD:-libras_dev_pw}@postgres:5432/${POSTGRES_DB:-libras_ar}
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-in-production}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost}
+      PORT: 3001
+    expose:
+      - "3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # -- Frontend (Nginx) ---------------------------------------------------------
+  # Nginx serve o bundle estatico do React e faz proxy de /api/ e /socket.io/
+  # para o backend -- nao ha bind mounts de codigo fonte em producao.
+  frontend:
+    build:
+      context: ./apps/frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - "80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
