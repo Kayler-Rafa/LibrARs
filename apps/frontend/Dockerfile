@@ -10,6 +10,16 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+# Variaveis de build passadas pelo Coolify via --build-arg
+ARG VITE_API_URL=""
+ARG VITE_WS_URL=""
+ARG VITE_SUPABASE_URL=""
+ARG VITE_SUPABASE_ANON_KEY=""
+ENV VITE_API_URL=$VITE_API_URL \
+    VITE_WS_URL=$VITE_WS_URL \
+    VITE_SUPABASE_URL=$VITE_SUPABASE_URL \
+    VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
+
 # Copia manifest e instala dependencias
 # Nota: o frontend e um workspace npm sem package-lock.json proprio.
 # npm install (sem ci) gera o lockfile no build, garantindo instalacao limpa.

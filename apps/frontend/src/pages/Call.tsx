@@ -8,7 +8,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useGestureStore } from '@/stores/gestureStore'
 import type { Landmark } from '@/types'
 
-const WS_URL = (import.meta.env.VITE_WS_URL as string | undefined) ?? 'http://localhost:3001'
+const WS_URL = (import.meta.env.VITE_WS_URL as string | undefined) ?? ''
 
 // ─────────────────────────────────────────────────────────────────────────────
 
