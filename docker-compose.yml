@@ -1,20 +1,17 @@
-version: '3.9'
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Libras AR — Docker Compose (desenvolvimento local)
+# =============================================================================
+#  Libras AR -- Docker Compose (PRODUCAO / Coolify)
 #
-#  Uso:
-#    cp .env.example .env          # preencha as variáveis
-#    docker compose up --build     # sobe tudo com hot-reload
+#  Para desenvolvimento local com hot-reload, use:
+#    docker compose -f docker-compose.dev.yml up --build
 #
-#  Serviços:
-#    postgres   → :5432
-#    backend    → :3001   (Node.js + Express + Socket.io)
-#    frontend   → :5173   (Vite + React)
-# ─────────────────────────────────────────────────────────────────────────────
+#  Servicos:
+#    postgres   -> interno (nao exposto externamente)
+#    backend    -> :3001
+#    frontend   -> :80  (nginx -- proxy /api/ e /socket.io/ para o backend)
+# =============================================================================
 
 services:
-  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  # -- PostgreSQL ---------------------------------------------------------------
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -24,55 +21,45 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-libras_dev_pw}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./backend/db/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
-    ports:
-      - "5432:5432"
+      - ./apps/backend/db/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
     healthcheck:
-      # Evita falso-negativo em ambientes com volume já inicializado
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 || exit 1"]
+      # -U especifica o usuario correto; sem isso pg_isready conecta como "root"
+      # (usuario do OS no container) que nao existe no banco -> FATAL -> unhealthy
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U ${POSTGRES_USER:-libras} -d ${POSTGRES_DB:-libras_ar}"]
       interval: 5s
       timeout: 5s
       retries: 24
       start_period: 20s
 
-  # ── Backend API + WebSocket ─────────────────────────────────────────────────
+  # -- Backend API + WebSocket --------------------------------------------------
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile.dev
+      context: ./apps/backend
+      dockerfile: Dockerfile
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-libras}:${POSTGRES_PASSWORD:-libras_dev_pw}@postgres:5432/${POSTGRES_DB:-libras_ar}
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-in-production}
-      CORS_ORIGIN: http://localhost:5173
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost}
       PORT: 3001
-    volumes:
-      - ./backend:/app
-      - backend_node_modules:/app/node_modules
-    ports:
-      - "3001:3001"
+    expose:
+      - "3001"
     depends_on:
       postgres:
         condition: service_healthy
 
-  # ── Frontend Vite ───────────────────────────────────────────────────────────
+  # -- Frontend (Nginx) ---------------------------------------------------------
+  # Nginx serve o bundle estatico do React e faz proxy de /api/ e /socket.io/
+  # para o backend -- nao ha bind mounts de codigo fonte em producao.
   frontend:
     build:
-      context: .
-      dockerfile: Dockerfile.frontend.dev
+      context: ./apps/frontend
+      dockerfile: Dockerfile
     restart: unless-stopped
-    environment:
-      VITE_API_URL: http://localhost:3001
-      VITE_WS_URL: http://localhost:3001
-    volumes:
-      - .:/app
-      - frontend_node_modules:/app/node_modules
-    ports:
-      - "5173:5173"
+    expose:
+      - "80"
     depends_on:
       - backend
 
 volumes:
   postgres_data:
-  backend_node_modules:
-  frontend_node_modules:

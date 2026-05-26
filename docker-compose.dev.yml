@@ -1,0 +1,77 @@
+# =============================================================================
+#  Libras AR -- Docker Compose de DESENVOLVIMENTO LOCAL
+#
+#  Uso:
+#    cp .env.example .env
+#    docker compose -f docker-compose.dev.yml up --build
+#
+#  Diferencas em relacao ao compose de producao:
+#    - Usa Dockerfile.dev com hot-reload (tsx watch / vite --host)
+#    - Monta o codigo fonte via bind mount (alteracoes refletem ao vivo)
+#    - Preserva node_modules em volumes nomeados (evita reinstalar a cada restart)
+#    - Expoe postgres na porta 5432 para ferramentas locais (DBeaver, psql, etc.)
+#    - Frontend roda na porta 5173 (Vite), nao no Nginx
+# =============================================================================
+
+services:
+  # -- PostgreSQL ---------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-libras_ar}
+      POSTGRES_USER: ${POSTGRES_USER:-libras}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-libras_dev_pw}
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+      - ./apps/backend/db/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U \"$POSTGRES_USER\""]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+
+  # -- Backend (hot-reload com tsx watch) ---------------------------------------
+  backend:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile.dev
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-libras}:${POSTGRES_PASSWORD:-libras_dev_pw}@postgres:5432/${POSTGRES_DB:-libras_ar}
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-in-production}
+      CORS_ORIGIN: http://localhost:5173
+      PORT: 3001
+    volumes:
+      - ./apps/backend:/app
+      - backend_node_modules:/app/node_modules
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # -- Frontend (hot-reload com Vite) ------------------------------------------
+  frontend:
+    build:
+      context: ./apps/frontend
+      dockerfile: Dockerfile.dev
+    restart: unless-stopped
+    environment:
+      VITE_API_URL: http://localhost:3001
+      VITE_WS_URL: http://localhost:3001
+    volumes:
+      - ./apps/frontend:/app
+      - frontend_node_modules:/app/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data_dev:
+  backend_node_modules:
+  frontend_node_modules:

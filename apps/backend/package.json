@@ -1,12 +1,14 @@
 {
-  "name": "libras-ar-backend",
+  "name": "@librars/backend",
   "version": "1.0.0",
   "description": "Backend API + WebSocket para o Libras AR Translator",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "lint": "eslint src --ext .ts",
+    "type-check": "tsc --noEmit"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -18,13 +20,17 @@
     "socket.io": "^4.7.5"
   },
   "devDependencies": {
+    "@eslint/js": "^9.28.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^20.14.2",
     "@types/pg": "^8.11.6",
+    "eslint": "^10.3.0",
+    "globals": "^15.0.0",
     "tsx": "^4.15.5",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "typescript-eslint": "^8.59.2"
   }
 }
