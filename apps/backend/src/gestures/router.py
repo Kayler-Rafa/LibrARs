@@ -35,6 +35,33 @@ async def list_gestures(current_user: dict = Depends(get_current_user)):
     return [_row_to_out(r) for r in rows]
 
 
+@router.get("/dataset")
+async def collective_dataset(_: dict = Depends(get_current_user)):
+    """
+    Base coletiva: amostras de TODOS os participantes agregadas por nome de gesto.
+    Usada pela tradução para reconhecer letras treinadas por toda a comunidade.
+    Retorna apenas nome + amostras (sem identificar quem treinou) e limita a
+    quantidade por gesto para não pesar o classificador no navegador.
+    """
+    CAP_PER_NAME = 120  # máximo de amostras agregadas por letra/gesto
+
+    rows = await db.fetch(
+        "SELECT name, samples FROM gestures ORDER BY updated_at DESC"
+    )
+    agg: dict[str, list] = {}
+    for r in rows:
+        name = r["name"]
+        samples = r["samples"] if isinstance(r["samples"], list) else json.loads(r["samples"])
+        bucket = agg.setdefault(name, [])
+        if len(bucket) < CAP_PER_NAME:
+            bucket.extend(samples)
+
+    return [
+        {"name": name, "samples": samples[:CAP_PER_NAME]}
+        for name, samples in agg.items()
+    ]
+
+
 @router.get("/user/{user_id}")
 async def list_user_gestures(user_id: str, current_user: dict = Depends(get_current_user)):
     # Apenas o próprio usuário pode ver seus gestos

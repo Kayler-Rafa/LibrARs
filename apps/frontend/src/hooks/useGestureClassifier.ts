@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useMemo } from 'react'
 import { useGestureStore } from '@/stores/gestureStore'
 import { normalizeLandmarks, landmarksToVector, knnClassify } from '@/lib/classifier'
 import type { Landmark } from '@/types'
@@ -21,7 +21,15 @@ const COOLDOWN_MS = 1800       // intervalo mínimo entre confirmações
 const PHRASE_RESET_MS = 3000   // sem novo gesto após Xs → frase encerrada
 
 export function useGestureClassifier(landmarks: Landmark[] | null): UseGestureClassifierReturn {
-  const gestures = useGestureStore(s => s.gestures)
+  const ownGestures = useGestureStore(s => s.gestures)
+  const collectiveGestures = useGestureStore(s => s.collectiveGestures)
+
+  // Combina gestos próprios + base coletiva (de todos os participantes).
+  // useMemo evita recriar o array a cada frame.
+  const gestures = useMemo(
+    () => [...ownGestures, ...collectiveGestures],
+    [ownGestures, collectiveGestures]
+  )
 
   const candidateRef = useRef<{ name: string; frames: number } | null>(null)
   const lastConfirmedRef = useRef<string | null>(null)

@@ -7,6 +7,7 @@ import { api } from '@/lib/api'
 interface GestureStore {
   gestures: GestureEntry[]
   pendingSync: boolean  // true se há algum gesto com erro de sync
+  collectiveGestures: GestureEntry[]  // base coletiva (todos os participantes) — só p/ classificação, não persiste
 
   addGesture: (name: string, samples: number[][]) => Promise<GestureEntry>
   updateGesture: (id: string, updates: Partial<GestureEntry>) => void
@@ -17,6 +18,7 @@ interface GestureStore {
   importFromJson: (json: string) => void
 
   loadFromApi: () => Promise<void>
+  loadCollectiveDataset: () => Promise<number>  // retorna nº de letras carregadas
   mergeFromApi: (apiGestures: { id: string; name: string; samples: number[][];
     sample_count: number; created_at: string; updated_at?: string }[]) => void
 }
@@ -30,6 +32,7 @@ export const useGestureStore = create<GestureStore>()(
     (set, get) => ({
       gestures: [],
       pendingSync: false,
+      collectiveGestures: [],
 
       // ── addGesture ──────────────────────────────────────────────────────────
       // Salva localmente como 'syncing', envia para API e confirma.
@@ -125,25 +128,76 @@ export const useGestureStore = create<GestureStore>()(
       exportAsJson: () => JSON.stringify(get().gestures, null, 2),
 
       // ── importFromJson ──────────────────────────────────────────────────────
+      // Aceita dois formatos:
+      //  1. Biblioteca pessoal: GestureEntry[] { id, name, samples, createdAt... }
+      //  2. Dataset da pesquisa (admin): [{ gesture_name, samples, participant... }]
+      // Em ambos, gestos com o MESMO nome são agregados (samples combinados),
+      // para que a tradução reconheça as letras treinadas por todos.
       importFromJson: (json) => {
         try {
-          const imported = JSON.parse(json) as GestureEntry[]
-          if (!Array.isArray(imported)) throw new Error('Formato inválido')
-          set(state => {
-            const existingIds = new Set(state.gestures.map(g => g.id))
-            const newGestures = imported.filter(g => !existingIds.has(g.id))
-            return { gestures: [...state.gestures, ...newGestures] }
-          })
-          if (isAuthed()) {
-            const existingIds = new Set(get().gestures.map(g => g.id))
-            imported
-              .filter(g => !existingIds.has(g.id))
-              .forEach(g =>
-                api.gestures.upsert({ id: g.id, name: g.name, samples: g.samples }).catch(() => null)
-              )
+          const parsed = JSON.parse(json)
+          if (!Array.isArray(parsed)) throw new Error('Formato inválido')
+
+          // Normaliza cada item para { name, samples } independente do formato
+          const byName = new Map<string, number[][]>()
+          for (const item of parsed as Array<Record<string, unknown>>) {
+            const name = String(item.name ?? item.gesture_name ?? '').trim().toUpperCase()
+            const samples = item.samples
+            if (!name || !Array.isArray(samples) || samples.length === 0) continue
+            const valid = (samples as unknown[]).filter(
+              s => Array.isArray(s) && s.length === 63
+            ) as number[][]
+            if (valid.length === 0) continue
+            const acc = byName.get(name) ?? []
+            byName.set(name, [...acc, ...valid])
           }
-        } catch {
-          console.error('[gestureStore] importFromJson failed')
+
+          if (byName.size === 0) throw new Error('Nenhum gesto válido encontrado')
+
+          set(state => {
+            const localByName = new Map(state.gestures.map(g => [g.name, g]))
+            for (const [name, newSamples] of byName) {
+              const existing = localByName.get(name)
+              if (existing) {
+                // Agrega samples ao gesto existente de mesmo nome
+                localByName.set(name, {
+                  ...existing,
+                  samples: [...existing.samples, ...newSamples],
+                  sampleCount: existing.samples.length + newSamples.length,
+                  updatedAt: new Date().toISOString(),
+                  syncStatus: 'syncing',
+                })
+              } else {
+                const now = new Date().toISOString()
+                localByName.set(name, {
+                  id: generateId(),
+                  name,
+                  samples: newSamples,
+                  sampleCount: newSamples.length,
+                  createdAt: now,
+                  updatedAt: now,
+                  isPublic: false,
+                  syncStatus: 'syncing',
+                })
+              }
+            }
+            return { gestures: Array.from(localByName.values()) }
+          })
+
+          // Sincroniza tudo com o servidor (upsert por nome)
+          if (isAuthed()) {
+            for (const g of get().gestures) {
+              if (byName.has(g.name)) {
+                api.gestures
+                  .upsert({ id: g.id, name: g.name, samples: g.samples })
+                  .then(() => get().updateGesture(g.id, { syncStatus: 'synced' }))
+                  .catch(() => get().updateGesture(g.id, { syncStatus: 'error' }))
+              }
+            }
+          }
+        } catch (e) {
+          console.error('[gestureStore] importFromJson failed:', e)
+          throw e instanceof Error ? e : new Error('Falha ao importar')
         }
       },
 
@@ -157,6 +211,27 @@ export const useGestureStore = create<GestureStore>()(
         } catch (e) {
           console.warn('[gestureStore] loadFromApi failed:', e)
         }
+      },
+
+      // ── loadCollectiveDataset ───────────────────────────────────────────────
+      // Carrega as letras de TODOS os participantes (em memória, só para a
+      // tradução reconhecer). Não persiste e não sincroniza de volta.
+      loadCollectiveDataset: async () => {
+        if (!isAuthed()) return 0
+        const data = await api.gestures.collectiveDataset()
+        const now = new Date().toISOString()
+        const collective: GestureEntry[] = data.map(d => ({
+          id: `collective-${d.name}`,
+          name: d.name,
+          samples: d.samples,
+          sampleCount: d.samples.length,
+          createdAt: now,
+          updatedAt: now,
+          isPublic: true,
+          syncStatus: 'synced',
+        }))
+        set({ collectiveGestures: collective })
+        return collective.length
       },
 
       // ── mergeFromApi ────────────────────────────────────────────────────────
@@ -209,6 +284,10 @@ export const useGestureStore = create<GestureStore>()(
         })
       },
     }),
-    { name: 'libras-ar-gestures' }
+    {
+      name: 'libras-ar-gestures',
+      // Persiste apenas os gestos do usuário — a base coletiva fica só em memória
+      partialize: (s) => ({ gestures: s.gestures }),
+    }
   )
 )

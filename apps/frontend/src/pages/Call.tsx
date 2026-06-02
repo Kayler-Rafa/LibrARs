@@ -16,7 +16,7 @@ type Status = 'idle' | 'waiting' | 'connected'
 
 export default function Call() {
   const { user, isAuthenticated } = useAuthStore()
-  const gestureCount = useGestureStore((s) => s.gestures.length)
+  const gestureCount = useGestureStore((s) => s.gestures.length + s.collectiveGestures.length)
 
   // ── Estado da chamada ──────────────────────────────────────────────────────
   const [status, setStatus] = useState<Status>('idle')

@@ -8,7 +8,7 @@ import type { Landmark } from '@/types'
 
 export default function Translate() {
   const [landmarks, setLandmarks] = useState<Landmark[] | null>(null)
-  const gestureCount = useGestureStore(s => s.gestures.length)
+  const gestureCount = useGestureStore(s => s.gestures.length + s.collectiveGestures.length)
 
   const handleLandmarks = useCallback((lms: Landmark[] | null, _detected: boolean) => {
     setLandmarks(lms)

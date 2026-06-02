@@ -1,10 +1,27 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { useGestureStore } from '@/stores/gestureStore'
 import { formatDate } from '@/lib/utils'
 
 export function GestureLibrary() {
-  const { gestures, deleteGesture, retrySync, exportAsJson, importFromJson, pendingSync } = useGestureStore()
+  const { gestures, deleteGesture, retrySync, exportAsJson, importFromJson, pendingSync,
+          loadCollectiveDataset, collectiveGestures } = useGestureStore()
   const importRef = useRef<HTMLInputElement>(null)
+  const [importMsg, setImportMsg] = useState<{ type: 'ok' | 'error'; text: string } | null>(null)
+  const [loadingCollective, setLoadingCollective] = useState(false)
+
+  const handleLoadCollective = async () => {
+    setLoadingCollective(true)
+    setImportMsg(null)
+    try {
+      const count = await loadCollectiveDataset()
+      setImportMsg({ type: 'ok', text: `Base coletiva carregada — ${count} letra(s)/gesto(s) de todos os participantes disponíveis na tradução.` })
+    } catch (err) {
+      setImportMsg({ type: 'error', text: err instanceof Error ? err.message : 'Falha ao carregar base coletiva' })
+    } finally {
+      setLoadingCollective(false)
+      setTimeout(() => setImportMsg(null), 6000)
+    }
+  }
 
   const handleExport = () => {
     const json = exportAsJson()
@@ -21,7 +38,17 @@ export function GestureLibrary() {
     const file = e.target.files?.[0]
     if (!file) return
     const reader = new FileReader()
-    reader.onload = () => importFromJson(reader.result as string)
+    reader.onload = () => {
+      try {
+        const before = useGestureStore.getState().gestures.length
+        importFromJson(reader.result as string)
+        const after = useGestureStore.getState().gestures.length
+        setImportMsg({ type: 'ok', text: `Importação concluída — ${after} gesto(s) na biblioteca${after > before ? ` (+${after - before} novos)` : ''}.` })
+      } catch (err) {
+        setImportMsg({ type: 'error', text: err instanceof Error ? err.message : 'Falha ao importar arquivo' })
+      }
+      setTimeout(() => setImportMsg(null), 5000)
+    }
     reader.readAsText(file)
     e.target.value = ''
   }
@@ -63,6 +90,42 @@ export function GestureLibrary() {
           )}
         </div>
       </div>
+
+      {/* Base coletiva da pesquisa */}
+      <div className="bg-gradient-to-br from-[#1B3A6B] to-[#2E75B6] rounded-xl p-4 text-white">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1">
+            <h3 className="font-bold text-sm flex items-center gap-1.5">🌐 Base coletiva</h3>
+            <p className="text-xs text-blue-100 mt-1 leading-relaxed">
+              Carregue as letras e gestos treinados por <strong>todos os participantes</strong> para
+              que a tradução reconheça muito mais sinais.
+            </p>
+            {collectiveGestures.length > 0 && (
+              <p className="text-xs text-green-200 mt-1.5 font-semibold">
+                ✓ {collectiveGestures.length} gesto(s) coletivos ativos na tradução
+              </p>
+            )}
+          </div>
+          <button
+            onClick={handleLoadCollective}
+            disabled={loadingCollective}
+            className="bg-white text-[#1B3A6B] px-4 py-2 rounded-lg text-xs font-bold hover:bg-blue-50 transition-colors disabled:opacity-60 whitespace-nowrap shrink-0"
+          >
+            {loadingCollective ? 'Carregando...' : collectiveGestures.length > 0 ? 'Atualizar' : 'Carregar'}
+          </button>
+        </div>
+      </div>
+
+      {/* Feedback de importação */}
+      {importMsg && (
+        <div className={`rounded-lg px-3 py-2.5 text-xs border ${
+          importMsg.type === 'ok'
+            ? 'bg-green-50 border-green-200 text-green-800'
+            : 'bg-red-50 border-red-200 text-red-700'
+        }`}>
+          {importMsg.text}
+        </div>
+      )}
 
       {/* Aviso de sync pendente */}
       {pendingSync && (

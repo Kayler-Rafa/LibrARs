@@ -146,6 +146,9 @@ export const api = {
 
     listByUser: (userId: string) =>
       req<ApiGesture[]>(`/api/gestures/user/${userId}`),
+
+    collectiveDataset: () =>
+      req<Array<{ name: string; samples: number[][] }>>('/api/gestures/dataset'),
   },
 
   admin: {
