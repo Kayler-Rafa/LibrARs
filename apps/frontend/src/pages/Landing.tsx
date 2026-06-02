@@ -154,13 +154,26 @@ export default function Landing() {
                 </button>
               </form>
 
-              <p className="text-xs text-gray-400 mt-4 text-center">
-                {mode === 'login' ? (
-                  <>Não tem acesso? <a href="#participar" className="text-[#2E75B6] font-semibold hover:underline">Saiba como participar</a></>
-                ) : (
-                  <>O primeiro cadastro vira administrador automaticamente.</>
-                )}
-              </p>
+              {mode === 'register' && (
+                <div className="mt-4 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
+                  <p className="text-xs text-blue-800 leading-relaxed">
+                    O cadastro aberto é exclusivo para o primeiro acesso (administrador).
+                    Novos participantes entram por <strong>link de convite</strong> — solicite pelo email{' '}
+                    <a href="mailto:labelleecandido@gmail.com" className="font-bold underline">
+                      labelleecandido@gmail.com
+                    </a>
+                  </p>
+                </div>
+              )}
+
+              {mode === 'login' && (
+                <p className="text-xs text-gray-400 mt-4 text-center">
+                  Não tem acesso?{' '}
+                  <a href="#participar" className="text-[#2E75B6] font-semibold hover:underline">
+                    Saiba como participar
+                  </a>
+                </p>
+              )}
             </div>
           </div>
         </div>

@@ -47,6 +47,16 @@ def _user_response(user: dict) -> dict:
 async def register(body: RegisterBody):
     email = body.email.lower().strip()
 
+    # Cadastro aberto só é permitido para o PRIMEIRO usuário (que vira admin).
+    # A partir daí, novos cadastros só por link de convite.
+    user_count = await db.fetchval("SELECT COUNT(*) FROM users")
+    if user_count and user_count > 0:
+        raise HTTPException(
+            403,
+            "O cadastro é feito por convite. Solicite seu link de acesso pelo email "
+            "labelleecandido@gmail.com",
+        )
+
     existing = await db.fetchrow("SELECT id FROM users WHERE email = $1", email)
     if existing:
         raise HTTPException(409, "Este email já está cadastrado")
