@@ -9,8 +9,10 @@ export default function Landing() {
   const { setAuth } = useAuthStore()
   const loadFromApi = useGestureStore(s => s.loadFromApi)
 
+  const [mode, setMode] = useState<'login' | 'register'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [name, setName] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -19,7 +21,9 @@ export default function Landing() {
     setError('')
     setLoading(true)
     try {
-      const res = await api.auth.login(email, password)
+      const res = mode === 'login'
+        ? await api.auth.login(email, password)
+        : await api.auth.register(email, password, name)
       setAuth(res.token, res.user)
       loadFromApi().catch(() => null)
       navigate('/dashboard', { replace: true })
@@ -95,14 +99,32 @@ export default function Landing() {
 
             {/* Formulário de acesso */}
             <div id="auth-form" className="bg-white rounded-2xl shadow-2xl p-6 md:p-8 text-gray-900 w-full max-w-md mx-auto lg:mx-0">
-              <div className="mb-6">
-                <h2 className="text-xl font-extrabold text-[#1B3A6B]">Acessar a plataforma</h2>
-                <p className="text-xs text-gray-400 mt-1">
-                  Participantes recebem acesso por link de convite do pesquisador responsável.
-                </p>
+              {/* Tabs */}
+              <div className="flex rounded-xl bg-gray-100 p-1 mb-5">
+                {(['login', 'register'] as const).map(m => (
+                  <button
+                    key={m}
+                    onClick={() => { setMode(m); setError('') }}
+                    className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all ${
+                      mode === m ? 'bg-white shadow-sm text-[#1B3A6B]' : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    {m === 'login' ? 'Entrar' : 'Cadastrar'}
+                  </button>
+                ))}
               </div>
 
               <form onSubmit={handleSubmit} className="space-y-4">
+                {mode === 'register' && (
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">Nome</label>
+                    <input
+                      type="text" value={name} onChange={e => setName(e.target.value)}
+                      placeholder="Seu nome completo"
+                      className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] focus:border-transparent transition bg-gray-50 focus:bg-white"
+                    />
+                  </div>
+                )}
                 <div>
                   <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">Email</label>
                   <input
@@ -128,15 +150,16 @@ export default function Landing() {
                   type="submit" disabled={loading}
                   className="w-full bg-[#2E75B6] hover:bg-[#1B3A6B] text-white font-bold py-3.5 rounded-xl transition-colors disabled:opacity-60 text-sm shadow-md shadow-blue-100"
                 >
-                  {loading ? 'Entrando...' : 'Entrar na plataforma'}
+                  {loading ? 'Aguarde...' : mode === 'login' ? 'Entrar na plataforma' : 'Criar conta'}
                 </button>
               </form>
 
               <p className="text-xs text-gray-400 mt-4 text-center">
-                Não tem acesso ainda?{' '}
-                <a href="#participar" className="text-[#2E75B6] font-semibold hover:underline">
-                  Saiba como participar
-                </a>
+                {mode === 'login' ? (
+                  <>Não tem acesso? <a href="#participar" className="text-[#2E75B6] font-semibold hover:underline">Saiba como participar</a></>
+                ) : (
+                  <>O primeiro cadastro vira administrador automaticamente.</>
+                )}
               </p>
             </div>
           </div>
