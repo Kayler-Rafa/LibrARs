@@ -65,7 +65,6 @@ services:
       - --no-tls
       - --no-dtls
       - --no-cli
-      - --no-loopback-peers
       - --no-multicast-peers
 
 networks:
