@@ -286,8 +286,34 @@ export const useGestureStore = create<GestureStore>()(
     }),
     {
       name: 'libras-ar-gestures',
+      version: 2,
       // Persiste apenas os gestos do usuário — a base coletiva fica só em memória
       partialize: (s) => ({ gestures: s.gestures }),
+      // Limpa gestos corrompidos (ex: importações antigas sem nome/samples válidos)
+      migrate: (persisted) => {
+        const p = persisted as { gestures?: unknown[] } | undefined
+        if (p && Array.isArray(p.gestures)) {
+          p.gestures = p.gestures
+            .filter((g): g is GestureEntry => {
+              const x = g as Partial<GestureEntry>
+              return (
+                !!x &&
+                typeof x.name === 'string' &&
+                x.name.trim().length > 0 &&
+                Array.isArray(x.samples) &&
+                x.samples.length > 0
+              )
+            })
+            .map(g => ({
+              ...g,
+              id: g.id || generateId(),
+              sampleCount: g.sampleCount ?? g.samples.length,
+              createdAt: g.createdAt || new Date().toISOString(),
+              updatedAt: g.updatedAt || g.createdAt || new Date().toISOString(),
+            }))
+        }
+        return p as { gestures: GestureEntry[] }
+      },
     }
   )
 )

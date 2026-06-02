@@ -1,11 +1,16 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import { useGestureStore } from '@/stores/gestureStore'
 import { formatDate } from '@/lib/utils'
 
 export function GestureLibrary() {
   const { gestures, deleteGesture, retrySync, exportAsJson, importFromJson, pendingSync,
-          loadCollectiveDataset, collectiveGestures } = useGestureStore()
+          loadCollectiveDataset, collectiveGestures, loadFromApi } = useGestureStore()
   const importRef = useRef<HTMLInputElement>(null)
+
+  // Sincroniza com o servidor ao abrir a biblioteca (traz dados reais)
+  useEffect(() => {
+    loadFromApi().catch(() => null)
+  }, [loadFromApi])
   const [importMsg, setImportMsg] = useState<{ type: 'ok' | 'error'; text: string } | null>(null)
   const [loadingCollective, setLoadingCollective] = useState(false)
 
