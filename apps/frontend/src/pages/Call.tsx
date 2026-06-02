@@ -195,8 +195,19 @@ export default function Call() {
     if (pcRef.current && pcRef.current.connectionState !== 'closed') return pcRef.current
     const pc = new RTCPeerConnection({
       iceServers: [
+        // STUN — descobre IP público (falha em NAT simétrico)
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
+        // TURN — retransmite via servidor quando STUN falha (WiFi, NAT simétrico)
+        {
+          urls: [
+            'turn:openrelay.metered.ca:80',
+            'turn:openrelay.metered.ca:443',
+            'turns:openrelay.metered.ca:443',
+          ],
+          username: 'openrelayproject',
+          credential: 'openrelayproject',
+        },
       ],
     })
     pc.ontrack = e => { if (remoteVideoRef.current) remoteVideoRef.current.srcObject = e.streams[0] }
