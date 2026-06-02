@@ -40,7 +40,7 @@ function StatusBadge({
 }
 
 export function CameraFeed({ onLandmarks, children }: CameraFeedProps) {
-  const { videoRef, isReady, error, facingMode, toggleCamera } = useCamera()
+  const { videoRef, isReady, error, facingMode, toggleCamera, aspectRatio } = useCamera()
   const { landmarks, isHandDetected, isModelReady, fps } = useHandTracking(videoRef, isReady)
 
   const mirrored = facingMode === 'user'
@@ -60,13 +60,16 @@ export function CameraFeed({ onLandmarks, children }: CameraFeedProps) {
         </div>
       )}
 
-      <div className="relative bg-black rounded-2xl overflow-hidden" style={{ aspectRatio: '16/9' }}>
+      <div
+        className="relative bg-black rounded-2xl overflow-hidden mx-auto w-full"
+        style={{ aspectRatio }}
+      >
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted
-          className="w-full h-full object-cover"
+          className="w-full h-full object-contain"
           style={{ transform: mirrored ? 'scaleX(-1)' : 'none' }}
           aria-label="Feed da câmera"
         />

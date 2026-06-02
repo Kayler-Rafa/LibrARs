@@ -8,6 +8,8 @@ export interface UseCameraReturn {
   error: string | null
   facingMode: FacingMode
   toggleCamera: () => void
+  /** Proporção real do vídeo da câmera (largura/altura), ex: 0.75 em retrato */
+  aspectRatio: number
 }
 
 export function useCamera(): UseCameraReturn {
@@ -16,6 +18,7 @@ export function useCamera(): UseCameraReturn {
   const [isReady, setIsReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [facingMode, setFacingMode] = useState<FacingMode>('user')
+  const [aspectRatio, setAspectRatio] = useState(16 / 9)
 
   const startCamera = useCallback(async (mode: FacingMode) => {
     streamRef.current?.getTracks().forEach(t => t.stop())
@@ -47,19 +50,29 @@ export function useCamera(): UseCameraReturn {
     }
   }, [facingMode, startCamera])
 
-  const handleVideoReady = useCallback(() => setIsReady(true), [])
+  const handleVideoReady = useCallback(() => {
+    setIsReady(true)
+    const video = videoRef.current
+    if (video && video.videoWidth && video.videoHeight) {
+      setAspectRatio(video.videoWidth / video.videoHeight)
+    }
+  }, [])
 
-  // Attach onloadeddata listener when videoRef mounts
+  // Attach listeners when videoRef mounts. loadedmetadata garante videoWidth/Height.
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
     video.addEventListener('loadeddata', handleVideoReady)
-    return () => video.removeEventListener('loadeddata', handleVideoReady)
+    video.addEventListener('loadedmetadata', handleVideoReady)
+    return () => {
+      video.removeEventListener('loadeddata', handleVideoReady)
+      video.removeEventListener('loadedmetadata', handleVideoReady)
+    }
   }, [handleVideoReady])
 
   const toggleCamera = useCallback(() => {
     setFacingMode(m => (m === 'user' ? 'environment' : 'user'))
   }, [])
 
-  return { videoRef, isReady, error, facingMode, toggleCamera }
+  return { videoRef, isReady, error, facingMode, toggleCamera, aspectRatio }
 }
