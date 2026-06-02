@@ -83,6 +83,17 @@ async def gesture(sid, data):
     )
 
 
+@sio.on("speech")
+async def speech(sid, data):
+    """Fala transcrita pelo STT — envia para o outro participante da sala."""
+    await sio.emit(
+        "peer-speech",
+        {"text": data.get("text"), "final": data.get("final", False)},
+        room=data.get("code"),
+        skip_sid=sid,
+    )
+
+
 @sio.event
 async def disconnect(sid):
     print(f"[ws] disconnected  {sid}")
