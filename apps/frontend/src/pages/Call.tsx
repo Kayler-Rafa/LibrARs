@@ -195,18 +195,17 @@ export default function Call() {
     if (pcRef.current && pcRef.current.connectionState !== 'closed') return pcRef.current
     const pc = new RTCPeerConnection({
       iceServers: [
-        // STUN — descobre IP público (falha em NAT simétrico)
+        // STUN — tenta conexão direta primeiro (sem custo de banda)
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        // TURN — retransmite via servidor quando STUN falha (WiFi, NAT simétrico)
+        // TURN próprio (coturn na VPS) — relé do vídeo quando STUN falha
+        // (WiFi com NAT simétrico). Credenciais são públicas por natureza no WebRTC.
         {
           urls: [
-            'turn:openrelay.metered.ca:80',
-            'turn:openrelay.metered.ca:443',
-            'turns:openrelay.metered.ca:443',
+            'turn:37.27.81.229:3478?transport=udp',
+            'turn:37.27.81.229:3478?transport=tcp',
           ],
-          username: 'openrelayproject',
-          credential: 'openrelayproject',
+          username: 'librasturn',
+          credential: 'libras-turn-2026',
         },
       ],
     })

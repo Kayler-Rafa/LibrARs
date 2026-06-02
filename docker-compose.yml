@@ -39,6 +39,35 @@ services:
       - "traefik.docker.network=coolify"
       - "traefik.http.services.frontend.loadbalancer.server.port=80"
 
+  # -- TURN/STUN (coturn) -------------------------------------------------------
+  #  Relay de video WebRTC para chamadas atras de NAT simetrico (WiFi).
+  #  Usa network_mode: host porque o coturn aloca uma faixa dinamica de portas
+  #  UDP de relay -- mapear isso via Docker bridge e inviavel.
+  #
+  #  IMPORTANTE: liberar no firewall da VPS (Hetzner Cloud Firewall + ufw):
+  #    - UDP/TCP 3478          (porta de sinalizacao TURN/STUN)
+  #    - UDP 49160-49200       (faixa de portas de relay)
+  coturn:
+    image: coturn/coturn:4.6.2-alpine
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - -n
+      - --log-file=stdout
+      - --listening-port=3478
+      - --min-port=49160
+      - --max-port=49200
+      - --realm=librasar
+      - --external-ip=37.27.81.229
+      - --lt-cred-mech
+      - --user=librasturn:${TURN_PASSWORD:-libras-turn-2026}
+      - --fingerprint
+      - --no-tls
+      - --no-dtls
+      - --no-cli
+      - --no-loopback-peers
+      - --no-multicast-peers
+
 networks:
   coolify:
     external: true
