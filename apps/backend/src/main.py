@@ -13,16 +13,54 @@ from .socket_events import sio
 
 
 async def run_migrations():
-    """Migrações incrementais — seguras para rodar múltiplas vezes (IF NOT EXISTS)."""
+    """
+    Cria o schema completo do zero se não existir, e aplica migrações incrementais.
+    Necessário em produção: o banco é externo e o init.sql não roda automaticamente.
+    Tudo usa IF NOT EXISTS — seguro para rodar a cada startup.
+    """
     migrations = [
-        # Índices de performance
-        "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
-        "CREATE INDEX IF NOT EXISTS idx_gestures_created_at ON gestures(created_at DESC)",
-        # Perfil do participante
+        # Extensão para gen_random_uuid() e gen_random_bytes()
+        'CREATE EXTENSION IF NOT EXISTS "pgcrypto"',
+
+        # Tabela de usuários (schema completo já com perfil)
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+            email         TEXT        UNIQUE NOT NULL,
+            password_hash TEXT        NOT NULL,
+            name          TEXT        NOT NULL DEFAULT '',
+            role          TEXT        NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
+            is_student    BOOLEAN     NOT NULL DEFAULT false,
+            has_disability BOOLEAN    NOT NULL DEFAULT false,
+            created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+        """,
+
+        # Tabela de gestos
+        """
+        CREATE TABLE IF NOT EXISTS gestures (
+            id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id      UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name         TEXT        NOT NULL,
+            samples      JSONB       NOT NULL DEFAULT '[]',
+            samples_raw  JSONB       NOT NULL DEFAULT '[]',
+            sample_count INT         NOT NULL DEFAULT 0,
+            created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE (user_id, name)
+        )
+        """,
+
+        # Migrações incrementais (para bancos que já tinham schema antigo)
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_student BOOLEAN NOT NULL DEFAULT false",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS has_disability BOOLEAN NOT NULL DEFAULT false",
-        # Amostras brutas para pesquisa
         "ALTER TABLE gestures ADD COLUMN IF NOT EXISTS samples_raw JSONB NOT NULL DEFAULT '[]'::jsonb",
+
+        # Índices
+        "CREATE INDEX IF NOT EXISTS idx_gestures_user_id ON gestures(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)",
+        "CREATE INDEX IF NOT EXISTS idx_gestures_created_at ON gestures(created_at DESC)",
+
         # Tokens de convite
         """
         CREATE TABLE IF NOT EXISTS invite_tokens (
@@ -35,6 +73,7 @@ async def run_migrations():
             created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
         )
         """,
+
         # Tokens de reset de senha
         """
         CREATE TABLE IF NOT EXISTS reset_tokens (
@@ -46,12 +85,48 @@ async def run_migrations():
             created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
         )
         """,
+
+        # Trigger: atualiza updated_at automaticamente
+        """
+        CREATE OR REPLACE FUNCTION set_updated_at()
+        RETURNS TRIGGER AS $func$
+        BEGIN
+          NEW.updated_at = now();
+          RETURN NEW;
+        END;
+        $func$ LANGUAGE plpgsql
+        """,
+        "DROP TRIGGER IF EXISTS gestures_set_updated_at ON gestures",
+        """
+        CREATE TRIGGER gestures_set_updated_at
+          BEFORE UPDATE ON gestures
+          FOR EACH ROW EXECUTE FUNCTION set_updated_at()
+        """,
+
+        # Trigger: primeiro usuário vira admin
+        """
+        CREATE OR REPLACE FUNCTION set_first_user_as_admin()
+        RETURNS TRIGGER AS $func$
+        BEGIN
+          IF (SELECT COUNT(*) FROM users WHERE role = 'admin') = 0 THEN
+            NEW.role := 'admin';
+          END IF;
+          RETURN NEW;
+        END;
+        $func$ LANGUAGE plpgsql
+        """,
+        "DROP TRIGGER IF EXISTS users_set_first_admin ON users",
+        """
+        CREATE TRIGGER users_set_first_admin
+          BEFORE INSERT ON users
+          FOR EACH ROW EXECUTE FUNCTION set_first_user_as_admin()
+        """,
     ]
     for sql in migrations:
         try:
             await db.execute(sql.strip())
         except Exception as e:
-            print(f"⚠️  Migration skipped ({e})")
+            print(f"⚠️  Migration step failed: {e}")
     print("✅  Migrations OK")
 
 
