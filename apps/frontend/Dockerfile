@@ -20,6 +20,11 @@ ARG VITE_SUPABASE_ANON_KEY=""
 ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL \
     VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
 
+# Versao do deploy: o Coolify injeta SOURCE_COMMIT (git sha) como build arg.
+# Exposto ao Vite como VITE_APP_VERSION para o badge de versao no canto da UI.
+ARG SOURCE_COMMIT="dev"
+ENV VITE_APP_VERSION=$SOURCE_COMMIT
+
 # Copia manifest e instala dependencias
 # Nota: o frontend e um workspace npm sem package-lock.json proprio.
 # npm install (sem ci) gera o lockfile no build, garantindo instalacao limpa.

@@ -226,6 +226,21 @@ function PublicNav() {
   )
 }
 
+// ── Badge de versão (canto inferior direito) ──────────────────────────────────
+//  Mostra o commit SHA curto do deploy atual, injetado no build via SOURCE_COMMIT.
+//  Serve para conferir rapidamente qual versão está no ar em produção.
+function VersionBadge() {
+  const version = (import.meta.env.VITE_APP_VERSION as string | undefined)?.slice(0, 7) || 'dev'
+  return (
+    <span
+      className="fixed bottom-1 right-1 z-[100] text-[10px] leading-none font-mono text-gray-400/60 select-none pointer-events-none"
+      title="Versão do deploy"
+    >
+      {version}
+    </span>
+  )
+}
+
 // ── App ───────────────────────────────────────────────────────────────────────
 function AppContent() {
   const { isAuthenticated } = useAuthStore()
@@ -236,6 +251,8 @@ function AppContent() {
     <div className="flex flex-col min-h-screen">
       {isAuthenticated && <AuthNav />}
       {isLanding && <PublicNav />}
+
+      <VersionBadge />
 
       <main className="flex-1">
         <Routes>
