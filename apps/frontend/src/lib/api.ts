@@ -150,7 +150,7 @@ export const api = {
 
   admin: {
     getUsers: () =>
-      req<{ total: number; users: Array<{ id: string; email: string; name: string; role: string; created_at: string }> }>(
+      req<{ total: number; users: Array<{ id: string; email: string; name: string; role: string; is_student: boolean; has_disability: boolean; created_at: string }> }>(
         '/api/admin/users'
       ),
 
