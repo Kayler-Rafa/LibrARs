@@ -114,8 +114,8 @@ async def upsert_gesture(
         body.id if body.id else None,
         current_user["user_id"],
         gesture_name,
-        json.dumps(compressed),
-        json.dumps(raw_samples),
+        compressed,      # codec JSONB serializa automaticamente
+        raw_samples,     # idem
         len(compressed),
     )
     return _row_to_out(row)

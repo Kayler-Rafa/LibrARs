@@ -139,11 +139,17 @@ export function GestureLibrary() {
         </div>
       )}
 
+      {/* Meus gestos */}
+      <div className="flex items-center justify-between">
+        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wide">Meus gestos</h3>
+        {gestures.length > 0 && <span className="text-xs text-gray-400">{gestures.length}</span>}
+      </div>
+
       {gestures.length === 0 ? (
-        <div className="text-center py-8 text-gray-400">
+        <div className="text-center py-6 text-gray-400 bg-gray-50 rounded-lg">
           <p className="text-3xl mb-2">🤲</p>
-          <p className="text-sm">Nenhum gesto cadastrado ainda.</p>
-          <p className="text-xs mt-1">Grave o primeiro gesto acima.</p>
+          <p className="text-sm">Você ainda não treinou nenhum gesto.</p>
+          <p className="text-xs mt-1">Grave o primeiro na aba Treinar.</p>
         </div>
       ) : (
         <ul className="flex flex-col gap-2">
@@ -187,6 +193,34 @@ export function GestureLibrary() {
             </li>
           ))}
         </ul>
+      )}
+
+      {/* Base coletiva (somente leitura) */}
+      {collectiveGestures.length > 0 && (
+        <>
+          <div className="flex items-center justify-between mt-2 pt-3 border-t border-gray-100">
+            <h3 className="text-xs font-bold text-[#2E75B6] uppercase tracking-wide flex items-center gap-1.5">
+              🌐 Base coletiva
+            </h3>
+            <span className="text-xs text-gray-400">{collectiveGestures.length} gesto(s)</span>
+          </div>
+          <p className="text-xs text-gray-400 -mt-1">
+            Letras e gestos de todos os participantes — usados na tradução, não editáveis.
+          </p>
+          <ul className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {[...collectiveGestures]
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .map(g => (
+                <li
+                  key={g.id}
+                  className="flex items-center justify-between bg-blue-50/60 border border-blue-100 rounded-lg px-3 py-2"
+                >
+                  <span className="font-bold text-[#1B3A6B] text-sm truncate">{g.name}</span>
+                  <span className="text-xs text-blue-400 font-mono shrink-0 ml-1">{g.sampleCount}</span>
+                </li>
+              ))}
+          </ul>
+        </>
       )}
     </div>
   )

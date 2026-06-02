@@ -160,7 +160,7 @@ async def export_raw_data(_: dict = Depends(get_current_admin)):
     Uso: download para treinamento de modelos de ML.
     """
     rows = await db.fetch("""
-        SELECT g.id, g.name, g.samples_raw, g.sample_count, g.created_at,
+        SELECT g.id, g.name, g.samples, g.samples_raw, g.sample_count, g.created_at,
                u.id          AS user_id,
                u.name        AS user_name,
                u.is_student,
@@ -181,7 +181,13 @@ async def export_raw_data(_: dict = Depends(get_current_admin)):
                 "is_student": r["is_student"],
                 "has_disability": r["has_disability"],
             },
-            "samples": r["samples_raw"] if isinstance(r["samples_raw"], list) else [],
+            # Usa samples_raw (amostras originais). Se vazio, usa samples (comprimidas).
+            "samples": (
+                r["samples_raw"] if isinstance(r["samples_raw"], list) and len(r["samples_raw"]) > 0
+                else r["samples"] if isinstance(r["samples"], list)
+                else []
+            ),
+            "samples_raw_count": len(r["samples_raw"]) if isinstance(r["samples_raw"], list) else 0,
         }
         for r in rows
     ]
