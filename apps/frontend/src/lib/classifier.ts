@@ -35,8 +35,11 @@ function euclidean(a: number[], b: number[]): number {
 export function knnClassify(
   vector: number[],
   gestures: GestureEntry[],
-  k = 3,
-  threshold = 0.3
+  k = 5,
+  // Fraction of k-nearest that must agree (≥0.6 = maioria clara com k=5)
+  voteThreshold = 0.6,
+  // Distância máxima ao vizinho mais próximo — rejeita poses não reconhecidas
+  distThreshold = 0.85
 ): ClassificationResult | null {
   if (gestures.length === 0) return null
 
@@ -49,6 +52,10 @@ export function knnClassify(
   }
 
   neighbors.sort((a, b) => a.dist - b.dist)
+
+  // Rejeita se a pose está longe demais de qualquer amostra treinada
+  if (neighbors[0].dist > distThreshold) return null
+
   const kNearest = neighbors.slice(0, k)
 
   const votes: Record<string, { count: number; totalDist: number }> = {}
@@ -68,7 +75,7 @@ export function knnClassify(
   }
 
   const confidence = maxVotes / k
-  if (confidence < threshold) return null
+  if (confidence < voteThreshold) return null
 
   return {
     name: winner,

@@ -1,7 +1,3 @@
-// ─────────────────────────────────────────────────────────────────────────────
-//  API client — wrapper sobre fetch para o backend REST
-// ─────────────────────────────────────────────────────────────────────────────
-
 const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? ''
 
 function token(): string | null {
@@ -21,7 +17,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error((body as { error?: string }).error ?? res.statusText)
+    throw new Error((body as { error?: string; detail?: string }).error ?? (body as { detail?: string }).detail ?? res.statusText)
   }
 
   return res.json() as Promise<T>
@@ -33,6 +29,7 @@ export interface User {
   id: string
   email: string
   name: string
+  role: 'user' | 'admin'
 }
 
 export interface ApiGesture {
@@ -49,6 +46,55 @@ export interface AuthResponse {
   user: User
 }
 
+export interface AdminStats {
+  total_users: number
+  total_gestures: number
+  total_samples: number
+}
+
+export interface InviteToken {
+  token: string
+  created_at: string
+  expires_at: string
+  used_at: string | null
+  used_by_name: string | null
+  used_by_email: string | null
+}
+
+export interface AnalyticsData {
+  user_stats: Array<{
+    id: string
+    name: string
+    email: string
+    created_at: string
+    is_student: boolean
+    has_disability: boolean
+    gesture_count: number
+    total_samples: number
+  }>
+  top_gestures: Array<{
+    name: string
+    contributor_count: number
+    total_samples: number
+    avg_samples_per_user: number
+  }>
+  timeline: Array<{
+    week: string
+    active_users: number
+    gestures_added: number
+    samples_added: number
+  }>
+  all_gestures: Array<{
+    id: string
+    name: string
+    sample_count: number
+    created_at: string
+    updated_at: string
+    user_name: string
+    user_email: string
+  }>
+}
+
 // ── API ───────────────────────────────────────────────────────────────────────
 
 export const api = {
@@ -59,6 +105,12 @@ export const api = {
         body: JSON.stringify({ email, password, name }),
       }),
 
+    registerInvite: (token: string, email: string, password: string, name?: string, is_student?: boolean, has_disability?: boolean) =>
+      req<AuthResponse>('/api/auth/register-invite', {
+        method: 'POST',
+        body: JSON.stringify({ token, email, password, name, is_student, has_disability }),
+      }),
+
     login: (email: string, password: string) =>
       req<AuthResponse>('/api/auth/login', {
         method: 'POST',
@@ -66,6 +118,18 @@ export const api = {
       }),
 
     me: () => req<User>('/api/auth/me'),
+
+    validateInvite: (token: string) =>
+      req<{ valid: boolean }>(`/api/auth/validate-invite/${token}`),
+
+    validateReset: (token: string) =>
+      req<{ valid: boolean; user_name: string; user_email: string }>(`/api/auth/validate-reset/${token}`),
+
+    resetPassword: (token: string, new_password: string) =>
+      req<AuthResponse>('/api/auth/reset-password', {
+        method: 'POST',
+        body: JSON.stringify({ token, new_password }),
+      }),
   },
 
   gestures: {
@@ -82,5 +146,41 @@ export const api = {
 
     listByUser: (userId: string) =>
       req<ApiGesture[]>(`/api/gestures/user/${userId}`),
+  },
+
+  admin: {
+    getUsers: () =>
+      req<{ total: number; users: Array<{ id: string; email: string; name: string; role: string; created_at: string }> }>(
+        '/api/admin/users'
+      ),
+
+    getStats: () => req<AdminStats>('/api/admin/stats'),
+
+    getAnalytics: () => req<AnalyticsData>('/api/admin/analytics'),
+
+    updateUserRole: (userId: string, role: 'user' | 'admin') =>
+      req<{ message: string }>(`/api/admin/users/${userId}/role`, {
+        method: 'PATCH',
+        body: JSON.stringify({ role }),
+      }),
+
+    deleteUser: (userId: string) =>
+      req<{ message: string }>(`/api/admin/users/${userId}`, { method: 'DELETE' }),
+
+    createInvite: () =>
+      req<{ token: string; expires_at: string }>('/api/admin/invites', { method: 'POST' }),
+
+    listInvites: () => req<InviteToken[]>('/api/admin/invites'),
+
+    revokeInvite: (token: string) =>
+      req<{ ok: boolean }>(`/api/admin/invites/${token}`, { method: 'DELETE' }),
+
+    createResetLink: (userId: string) =>
+      req<{ token: string; expires_at: string; user_name: string; user_email: string }>(
+        `/api/admin/users/${userId}/reset-link`,
+        { method: 'POST' }
+      ),
+
+    exportRawDataset: () => req<unknown[]>('/api/admin/export/raw'),
   },
 }

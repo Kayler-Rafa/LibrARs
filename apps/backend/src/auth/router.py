@@ -13,9 +13,34 @@ class RegisterBody(BaseModel):
     name: str | None = None
 
 
+class RegisterInviteBody(BaseModel):
+    token: str
+    email: str
+    password: str
+    name: str | None = None
+    is_student: bool = False
+    has_disability: bool = False
+
+
 class LoginBody(BaseModel):
     email: str
     password: str
+
+
+class ResetPasswordBody(BaseModel):
+    token: str
+    new_password: str
+
+
+def _user_response(user: dict) -> dict:
+    return {
+        "id": str(user["id"]),
+        "email": user["email"],
+        "name": user["name"],
+        "role": user["role"],
+        "is_student": user.get("is_student", False),
+        "has_disability": user.get("has_disability", False),
+    }
 
 
 @router.post("/register", status_code=201)
@@ -31,15 +56,42 @@ async def register(body: RegisterBody):
 
     user = await db.fetchrow(
         "INSERT INTO users (email, password_hash, name) VALUES ($1, $2, $3)"
-        " RETURNING id, email, name",
-        email,
-        pw_hash,
-        display_name,
+        " RETURNING id, email, name, role, is_student, has_disability",
+        email, pw_hash, display_name,
     )
-    return {
-        "token": make_token(str(user["id"]), user["email"]),
-        "user": {"id": str(user["id"]), "email": user["email"], "name": user["name"]},
-    }
+    return {"token": make_token(str(user["id"]), user["email"], user["role"]), "user": _user_response(user)}
+
+
+@router.post("/register-invite", status_code=201)
+async def register_via_invite(body: RegisterInviteBody):
+    invite = await db.fetchrow(
+        "SELECT id FROM invite_tokens WHERE token = $1 AND used_at IS NULL AND expires_at > now()",
+        body.token,
+    )
+    if not invite:
+        raise HTTPException(400, "Link de convite inválido ou expirado")
+
+    email = body.email.lower().strip()
+    existing = await db.fetchrow("SELECT id FROM users WHERE email = $1", email)
+    if existing:
+        raise HTTPException(409, "Este email já está cadastrado")
+
+    pw_hash = hash_password(body.password)
+    display_name = (body.name or "").strip() or email.split("@")[0]
+
+    user = await db.fetchrow(
+        "INSERT INTO users (email, password_hash, name, is_student, has_disability)"
+        " VALUES ($1, $2, $3, $4, $5)"
+        " RETURNING id, email, name, role, is_student, has_disability",
+        email, pw_hash, display_name, body.is_student, body.has_disability,
+    )
+
+    await db.execute(
+        "UPDATE invite_tokens SET used_by = $1, used_at = now() WHERE id = $2",
+        user["id"], invite["id"],
+    )
+
+    return {"token": make_token(str(user["id"]), user["email"], user["role"]), "user": _user_response(user)}
 
 
 @router.post("/login")
@@ -47,22 +99,63 @@ async def login(body: LoginBody):
     email = body.email.lower().strip()
 
     user = await db.fetchrow(
-        "SELECT id, email, name, password_hash FROM users WHERE email = $1", email
+        "SELECT id, email, name, password_hash, role FROM users WHERE email = $1", email
     )
     if not user or not verify_password(body.password, user["password_hash"]):
         raise HTTPException(401, "Email ou senha incorretos")
 
-    return {
-        "token": make_token(str(user["id"]), user["email"]),
-        "user": {"id": str(user["id"]), "email": user["email"], "name": user["name"]},
-    }
+    return {"token": make_token(str(user["id"]), user["email"], user["role"]), "user": _user_response(user)}
+
+
+@router.post("/reset-password")
+async def reset_password(body: ResetPasswordBody):
+    reset = await db.fetchrow(
+        "SELECT id, user_id FROM reset_tokens WHERE token = $1 AND used_at IS NULL AND expires_at > now()",
+        body.token,
+    )
+    if not reset:
+        raise HTTPException(400, "Link de reset inválido ou expirado")
+
+    if len(body.new_password) < 6:
+        raise HTTPException(400, "Senha deve ter pelo menos 6 caracteres")
+
+    pw_hash = hash_password(body.new_password)
+    await db.execute("UPDATE users SET password_hash = $1 WHERE id = $2", pw_hash, reset["user_id"])
+    await db.execute("UPDATE reset_tokens SET used_at = now() WHERE id = $1", reset["id"])
+
+    user = await db.fetchrow("SELECT id, email, name, role FROM users WHERE id = $1", reset["user_id"])
+    return {"token": make_token(str(user["id"]), user["email"], user["role"]), "user": _user_response(user)}
+
+
+@router.get("/validate-invite/{token}")
+async def validate_invite(token: str):
+    invite = await db.fetchrow(
+        "SELECT id FROM invite_tokens WHERE token = $1 AND used_at IS NULL AND expires_at > now()",
+        token,
+    )
+    if not invite:
+        raise HTTPException(400, "Link de convite inválido ou expirado")
+    return {"valid": True}
+
+
+@router.get("/validate-reset/{token}")
+async def validate_reset(token: str):
+    reset = await db.fetchrow(
+        "SELECT user_id FROM reset_tokens WHERE token = $1 AND used_at IS NULL AND expires_at > now()",
+        token,
+    )
+    if not reset:
+        raise HTTPException(400, "Link de reset inválido ou expirado")
+    user = await db.fetchrow("SELECT name, email FROM users WHERE id = $1", reset["user_id"])
+    return {"valid": True, "user_name": user["name"], "user_email": user["email"]}
 
 
 @router.get("/me")
 async def me(current_user: dict = Depends(get_current_user)):
     user = await db.fetchrow(
-        "SELECT id, email, name FROM users WHERE id = $1", current_user["user_id"]
+        "SELECT id, email, name, role, is_student, has_disability FROM users WHERE id = $1",
+        current_user["user_id"],
     )
     if not user:
         raise HTTPException(404, "Usuário não encontrado")
-    return {"id": str(user["id"]), "email": user["email"], "name": user["name"]}
+    return _user_response(user)

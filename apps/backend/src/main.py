@@ -8,6 +8,7 @@ from .config import settings
 from . import database as db
 from .auth.router import router as auth_router
 from .gestures.router import router as gestures_router
+from .admin.router import router as admin_router
 from .socket_events import sio
 
 
@@ -34,6 +35,7 @@ app.add_middleware(
 
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(gestures_router, prefix="/api/gestures", tags=["gestures"])
+app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
 
 
 @app.get("/health", tags=["health"])

@@ -1,0 +1,282 @@
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from .. import database as db
+from ..auth.deps import get_current_admin
+
+router = APIRouter()
+
+
+class UpdateRoleRequest(BaseModel):
+    role: str
+
+
+# ── Users ─────────────────────────────────────────────────────────────────────
+
+@router.get("/users")
+async def list_users(_: dict = Depends(get_current_admin)):
+    users = await db.fetch(
+        "SELECT id, email, name, role, is_student, has_disability, created_at FROM users ORDER BY created_at DESC"
+    )
+    return {
+        "total": len(users),
+        "users": [
+            {
+                "id": str(u["id"]),
+                "email": u["email"],
+                "name": u["name"],
+                "role": u["role"],
+                "is_student": u["is_student"],
+                "has_disability": u["has_disability"],
+                "created_at": u["created_at"].isoformat() if u["created_at"] else None,
+            }
+            for u in users
+        ],
+    }
+
+
+@router.get("/stats")
+async def get_stats(_: dict = Depends(get_current_admin)):
+    row = await db.fetchrow(
+        "SELECT (SELECT COUNT(*) FROM users) as users_count,"
+        "       (SELECT COUNT(*) FROM gestures) as gestures_count,"
+        "       (SELECT COALESCE(SUM(sample_count), 0) FROM gestures) as samples_count"
+    )
+    return {
+        "total_users": row["users_count"] or 0,
+        "total_gestures": row["gestures_count"] or 0,
+        "total_samples": row["samples_count"] or 0,
+    }
+
+
+@router.patch("/users/{user_id}/role")
+async def update_user_role(
+    user_id: str,
+    request: UpdateRoleRequest,
+    admin: dict = Depends(get_current_admin),
+):
+    if request.role not in ("user", "admin"):
+        raise HTTPException(400, "Role deve ser 'user' ou 'admin'")
+
+    if str(admin["user_id"]) == user_id and request.role != "admin":
+        raise HTTPException(400, "Você não pode remover suas próprias permissões de administrador")
+
+    user = await db.fetchrow("SELECT id FROM users WHERE id = $1", user_id)
+    if not user:
+        raise HTTPException(404, "Usuário não encontrado")
+
+    await db.execute("UPDATE users SET role = $1 WHERE id = $2", request.role, user_id)
+    return {"message": f"Role do usuário atualizado para '{request.role}'"}
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(user_id: str, admin: dict = Depends(get_current_admin)):
+    if str(admin["user_id"]) == user_id:
+        raise HTTPException(400, "Você não pode deletar sua própria conta")
+
+    user = await db.fetchrow("SELECT id FROM users WHERE id = $1", user_id)
+    if not user:
+        raise HTTPException(404, "Usuário não encontrado")
+
+    await db.execute("DELETE FROM users WHERE id = $1", user_id)
+    return {"message": "Usuário deletado com sucesso"}
+
+
+# ── Invites ───────────────────────────────────────────────────────────────────
+
+@router.post("/invites")
+async def create_invite(admin: dict = Depends(get_current_admin)):
+    row = await db.fetchrow(
+        "INSERT INTO invite_tokens (created_by) VALUES ($1) RETURNING token, expires_at",
+        admin["user_id"],
+    )
+    return {"token": row["token"], "expires_at": row["expires_at"].isoformat()}
+
+
+@router.get("/invites")
+async def list_invites(_: dict = Depends(get_current_admin)):
+    rows = await db.fetch("""
+        SELECT it.token, it.created_at, it.expires_at, it.used_at,
+               u.name  AS used_by_name,
+               u.email AS used_by_email
+        FROM invite_tokens it
+        LEFT JOIN users u ON u.id = it.used_by
+        ORDER BY it.created_at DESC
+    """)
+    return [
+        {
+            "token": r["token"],
+            "created_at": r["created_at"].isoformat(),
+            "expires_at": r["expires_at"].isoformat(),
+            "used_at": r["used_at"].isoformat() if r["used_at"] else None,
+            "used_by_name": r["used_by_name"],
+            "used_by_email": r["used_by_email"],
+        }
+        for r in rows
+    ]
+
+
+@router.delete("/invites/{token}")
+async def revoke_invite(token: str, _: dict = Depends(get_current_admin)):
+    result = await db.execute(
+        "DELETE FROM invite_tokens WHERE token = $1 AND used_at IS NULL", token
+    )
+    if result == "DELETE 0":
+        raise HTTPException(404, "Convite não encontrado ou já utilizado")
+    return {"ok": True}
+
+
+# ── Reset links ───────────────────────────────────────────────────────────────
+
+@router.post("/users/{user_id}/reset-link")
+async def create_reset_link(user_id: str, _: dict = Depends(get_current_admin)):
+    user = await db.fetchrow("SELECT id, name, email FROM users WHERE id = $1", user_id)
+    if not user:
+        raise HTTPException(404, "Usuário não encontrado")
+
+    # Invalida tokens anteriores não usados
+    await db.execute(
+        "DELETE FROM reset_tokens WHERE user_id = $1 AND used_at IS NULL", user_id
+    )
+
+    row = await db.fetchrow(
+        "INSERT INTO reset_tokens (user_id) VALUES ($1) RETURNING token, expires_at",
+        user_id,
+    )
+    return {
+        "token": row["token"],
+        "expires_at": row["expires_at"].isoformat(),
+        "user_name": user["name"],
+        "user_email": user["email"],
+    }
+
+
+# ── Exportação dos dados brutos de pesquisa ───────────────────────────────────
+
+@router.get("/export/raw")
+async def export_raw_data(_: dict = Depends(get_current_admin)):
+    """
+    Exporta todas as amostras brutas de todos os participantes.
+    Formato: lista de objetos com metadados do participante + amostras originais.
+    Uso: download para treinamento de modelos de ML.
+    """
+    rows = await db.fetch("""
+        SELECT g.id, g.name, g.samples_raw, g.sample_count, g.created_at,
+               u.id          AS user_id,
+               u.name        AS user_name,
+               u.is_student,
+               u.has_disability
+        FROM gestures g
+        JOIN users u ON u.id = g.user_id
+        ORDER BY u.name, g.name
+    """)
+    return [
+        {
+            "gesture_id": str(r["id"]),
+            "gesture_name": r["name"],
+            "sample_count": r["sample_count"],
+            "collected_at": r["created_at"].isoformat(),
+            "participant": {
+                "id": str(r["user_id"]),
+                "name": r["user_name"],
+                "is_student": r["is_student"],
+                "has_disability": r["has_disability"],
+            },
+            "samples": r["samples_raw"] if isinstance(r["samples_raw"], list) else [],
+        }
+        for r in rows
+    ]
+
+
+# ── Analytics (dados da pesquisa) ─────────────────────────────────────────────
+
+@router.get("/analytics")
+async def get_analytics(_: dict = Depends(get_current_admin)):
+    # Estatísticas por usuário
+    user_stats = await db.fetch("""
+        SELECT u.id, u.name, u.email, u.created_at,
+               u.is_student, u.has_disability,
+               COUNT(g.id)                        AS gesture_count,
+               COALESCE(SUM(g.sample_count), 0)   AS total_samples
+        FROM users u
+        LEFT JOIN gestures g ON g.user_id = u.id
+        GROUP BY u.id, u.name, u.email, u.created_at, u.is_student, u.has_disability
+        ORDER BY total_samples DESC
+    """)
+
+    # Top gestos por nome (mais coletados)
+    top_gestures = await db.fetch("""
+        SELECT name,
+               COUNT(DISTINCT user_id)         AS contributor_count,
+               SUM(sample_count)               AS total_samples,
+               AVG(sample_count)::INT          AS avg_samples_per_user
+        FROM gestures
+        GROUP BY name
+        ORDER BY total_samples DESC
+        LIMIT 30
+    """)
+
+    # Timeline semanal de coleta
+    timeline = await db.fetch("""
+        SELECT DATE_TRUNC('week', created_at)::DATE  AS week,
+               COUNT(DISTINCT user_id)               AS active_users,
+               COUNT(*)                              AS gestures_added,
+               SUM(sample_count)                     AS samples_added
+        FROM gestures
+        GROUP BY week
+        ORDER BY week
+    """)
+
+    # Todos os gestos para a visão detalhada
+    all_gestures = await db.fetch("""
+        SELECT g.id, g.name, g.sample_count, g.created_at, g.updated_at,
+               u.name AS user_name, u.email AS user_email
+        FROM gestures g
+        JOIN users u ON u.id = g.user_id
+        ORDER BY g.updated_at DESC
+    """)
+
+    return {
+        "user_stats": [
+            {
+                "id": str(r["id"]),
+                "name": r["name"],
+                "email": r["email"],
+                "created_at": r["created_at"].isoformat(),
+                "is_student": r["is_student"],
+                "has_disability": r["has_disability"],
+                "gesture_count": r["gesture_count"],
+                "total_samples": r["total_samples"],
+            }
+            for r in user_stats
+        ],
+        "top_gestures": [
+            {
+                "name": r["name"],
+                "contributor_count": r["contributor_count"],
+                "total_samples": r["total_samples"],
+                "avg_samples_per_user": r["avg_samples_per_user"],
+            }
+            for r in top_gestures
+        ],
+        "timeline": [
+            {
+                "week": str(r["week"]),
+                "active_users": r["active_users"],
+                "gestures_added": r["gestures_added"],
+                "samples_added": r["samples_added"],
+            }
+            for r in timeline
+        ],
+        "all_gestures": [
+            {
+                "id": str(r["id"]),
+                "name": r["name"],
+                "sample_count": r["sample_count"],
+                "created_at": r["created_at"].isoformat(),
+                "updated_at": r["updated_at"].isoformat(),
+                "user_name": r["user_name"],
+                "user_email": r["user_email"],
+            }
+            for r in all_gestures
+        ],
+    }

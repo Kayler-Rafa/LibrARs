@@ -14,10 +14,11 @@ def verify_password(plain: str, hashed: str) -> bool:
     return _crypt.verify(plain, hashed)
 
 
-def make_token(user_id: str, email: str) -> str:
+def make_token(user_id: str, email: str, role: str = "user") -> str:
     payload = {
         "userId": user_id,
         "email": email,
+        "role": role,
         "exp": datetime.now(timezone.utc) + timedelta(days=30),
     }
     return jwt.encode(payload, settings.JWT_SECRET, algorithm="HS256")

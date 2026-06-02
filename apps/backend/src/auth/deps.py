@@ -14,4 +14,20 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token inválido ou expirado",
         )
-    return {"user_id": payload["userId"], "email": payload.get("email", "")}
+    return {
+        "user_id": payload["userId"],
+        "email": payload.get("email", ""),
+        "role": payload.get("role", "user"),
+    }
+
+
+async def get_current_admin(
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    if current_user.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Apenas administradores podem acessar este recurso",
+        )
+    return current_user
+

@@ -3,7 +3,7 @@ WORKDIR /app
 
 # Instala dependências
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN npm install
 
 # Source será montado via volume
 COPY . .

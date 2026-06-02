@@ -37,6 +37,13 @@ async def fetchrow(sql: str, *args: Any) -> dict | None:
         return dict(row) if row else None
 
 
+async def fetchval(sql: str, *args: Any) -> Any:
+    """Fetch a single scalar value (e.g., COUNT(*), MAX(id))"""
+    assert _pool is not None, "DB pool not initialized"
+    async with _pool.acquire() as conn:
+        return await conn.fetchval(sql, *args)
+
+
 async def execute(sql: str, *args: Any) -> str:
     assert _pool is not None, "DB pool not initialized"
     async with _pool.acquire() as conn:

@@ -12,6 +12,7 @@ export interface GestureEntry {
   createdAt: string
   updatedAt: string
   isPublic?: boolean
+  syncStatus?: 'synced' | 'syncing' | 'error'
 }
 
 export interface ClassificationResult {

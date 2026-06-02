@@ -16,8 +16,8 @@ export interface UseGestureClassifierReturn {
   currentPhrase: string
 }
 
-const CONFIRM_FRAMES = 12      // frames consecutivos para confirmar gesto
-const COOLDOWN_MS = 1500       // intervalo mínimo entre confirmações
+const CONFIRM_FRAMES = 18      // frames consecutivos para confirmar gesto (~0.6s a 30fps)
+const COOLDOWN_MS = 1800       // intervalo mínimo entre confirmações
 const PHRASE_RESET_MS = 3000   // sem novo gesto após Xs → frase encerrada
 
 export function useGestureClassifier(landmarks: Landmark[] | null): UseGestureClassifierReturn {
@@ -37,9 +37,10 @@ export function useGestureClassifier(landmarks: Landmark[] | null): UseGestureCl
 
   useEffect(() => {
     if (!landmarks || landmarks.length !== 21 || gestures.length === 0) {
-      // Mão saiu do frame — reset do candidato
+      // Mão saiu do frame — zera tudo para não herdar estado anterior
       candidateRef.current = null
       lastConfirmedRef.current = null
+      lastConfirmTimeRef.current = 0
       setIsDetecting(false)
       setCurrentGesture(null)
       setConfidence(0)

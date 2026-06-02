@@ -25,7 +25,6 @@ def _row_to_out(row: dict) -> dict:
     }
 
 
-# ── GET /api/gestures ─────────────────────────────────────────────────────────
 @router.get("")
 async def list_gestures(current_user: dict = Depends(get_current_user)):
     rows = await db.fetch(
@@ -36,9 +35,12 @@ async def list_gestures(current_user: dict = Depends(get_current_user)):
     return [_row_to_out(r) for r in rows]
 
 
-# ── GET /api/gestures/user/{user_id} ─────────────────────────────────────────
 @router.get("/user/{user_id}")
 async def list_user_gestures(user_id: str, current_user: dict = Depends(get_current_user)):
+    # Apenas o próprio usuário pode ver seus gestos
+    if str(current_user["user_id"]) != user_id:
+        raise HTTPException(403, "Acesso negado")
+
     rows = await db.fetch(
         "SELECT id, name, samples, sample_count FROM gestures"
         " WHERE user_id = $1 ORDER BY created_at ASC",
@@ -55,41 +57,43 @@ async def list_user_gestures(user_id: str, current_user: dict = Depends(get_curr
     ]
 
 
-# ── POST /api/gestures ────────────────────────────────────────────────────────
 @router.post("", status_code=201)
 async def upsert_gesture(
     body: GestureCreate,
     current_user: dict = Depends(get_current_user),
 ):
-    # 1. Remover outliers (frames de transição)
+    # Preserva todas as amostras brutas originais (dado de pesquisa)
+    raw_samples = body.samples
+
+    # Versão comprimida apenas para classificação local
     clean, _ = filter_outliers(body.samples)
+    compressed = compress_samples(clean, n_clusters=20)
 
-    # 2. Comprimir para máximo 20 centroids
-    final = compress_samples(clean, n_clusters=20)
+    gesture_name = body.name.strip().upper()
 
-    gesture_id = body.id if body.id else None
-
+    # ON CONFLICT por (user_id, name) garante que o mesmo gesto gravado em
+    # dispositivos diferentes não gera duplicatas nem viola a constraint.
     row = await db.fetchrow(
         """
-        INSERT INTO gestures (id, user_id, name, samples, sample_count)
-        VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4::jsonb, $5)
-        ON CONFLICT (id) DO UPDATE
-          SET name         = EXCLUDED.name,
-              samples      = EXCLUDED.samples,
+        INSERT INTO gestures (id, user_id, name, samples, samples_raw, sample_count)
+        VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4::jsonb, $5::jsonb, $6)
+        ON CONFLICT (user_id, name) DO UPDATE
+          SET samples      = EXCLUDED.samples,
+              samples_raw  = EXCLUDED.samples_raw,
               sample_count = EXCLUDED.sample_count,
               updated_at   = now()
         RETURNING id, name, samples, sample_count, created_at, updated_at
         """,
-        gesture_id,
+        body.id if body.id else None,
         current_user["user_id"],
-        body.name.strip().upper(),
-        json.dumps(final),
-        len(final),
+        gesture_name,
+        json.dumps(compressed),
+        json.dumps(raw_samples),
+        len(compressed),
     )
     return _row_to_out(row)
 
 
-# ── DELETE /api/gestures/{id} ─────────────────────────────────────────────────
 @router.delete("/{gesture_id}")
 async def delete_gesture(gesture_id: str, current_user: dict = Depends(get_current_user)):
     rows = await db.fetch(
@@ -102,7 +106,6 @@ async def delete_gesture(gesture_id: str, current_user: dict = Depends(get_curre
     return {"ok": True}
 
 
-# ── POST /api/gestures/classify ───────────────────────────────────────────────
 @router.post("/classify")
 async def classify_gesture(
     body: ClassifyRequest,
@@ -114,7 +117,6 @@ async def classify_gesture(
     return result
 
 
-# ── POST /api/gestures/compress ───────────────────────────────────────────────
 @router.post("/compress")
 async def compress_gesture_samples(
     body: CompressRequest,
