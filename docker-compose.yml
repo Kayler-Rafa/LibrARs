@@ -34,6 +34,9 @@ services:
     networks:
       - default
       - coolify
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.frontend.loadbalancer.server.port=80"
 
 networks:
   coolify:
