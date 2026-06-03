@@ -12,10 +12,7 @@ const MIN_SAMPLES = 10
 const MAX_SAMPLES = 150
 const SAMPLE_INTERVAL_MS = 100
 
-// Alfabeto manual de Libras (A-Z)
-const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')
-
-// Palavras e expressões comuns em Libras
+const ALPHABET    = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')
 const COMMON_SIGNS = [
   'OLÁ', 'TCHAU', 'OBRIGADO', 'POR FAVOR', 'SIM', 'NÃO',
   'AJUDA', 'ÁGUA', 'COMER', 'BANHEIRO', 'NOME', 'SURDO',
@@ -24,14 +21,99 @@ const COMMON_SIGNS = [
   'HOJE', 'AMANHÃ', 'ONTEM',
 ]
 
+// ── Qualidade da gravação ─────────────────────────────────────────────────────
+
+type QualityLevel = 'great' | 'good' | 'fair' | 'poor'
+
+interface RecordingQuality {
+  level: QualityLevel
+  message: string
+  detail: string
+}
+
+/**
+ * Mede a qualidade da gravação pelo jitter — média das acelerações
+ * quadro a quadro normalizadas por dimensão. Funciona para sinais
+ * estáticos (jitter baixo = mão firme) e dinâmicos (jitter baixo =
+ * movimento suave e controlado).
+ */
+function computeRecordingQuality(samples: number[][]): RecordingQuality {
+  const N = samples.length
+  const DIMS = 63
+
+  if (N < 3) {
+    return { level: 'poor', message: 'Poucas amostras', detail: 'Grave por mais tempo para avaliar a qualidade.' }
+  }
+
+  // Velocidades: diferença entre frames consecutivos
+  const velocities = samples.slice(1).map((frame, i) =>
+    frame.map((v, d) => v - samples[i][d])
+  )
+
+  // Acelerações: diferença entre velocidades consecutivas
+  const accelerations = velocities.slice(1).map((vel, i) =>
+    vel.map((v, d) => v - velocities[i][d])
+  )
+
+  if (accelerations.length === 0) {
+    return { level: 'good', message: 'Boa qualidade', detail: 'Gravação dentro do esperado.' }
+  }
+
+  // Jitter = magnitude média das acelerações, normalizada pelo nº de dimensões
+  const jitter = accelerations.reduce((sum, acc) => {
+    const mag = Math.sqrt(acc.reduce((s, v) => s + v * v, 0))
+    return sum + mag / Math.sqrt(DIMS)
+  }, 0) / accelerations.length
+
+  // Penaliza amostras insuficientes — eleva o limiar mínimo para "great"
+  const minSamplesForGreat = 30
+
+  if (jitter < 0.008 && N >= minSamplesForGreat) {
+    return {
+      level: 'great',
+      message: 'Ótima qualidade',
+      detail: 'Mão firme e movimento controlado. Pode salvar com confiança.',
+    }
+  }
+  if (jitter < 0.018) {
+    return {
+      level: 'good',
+      message: 'Boa qualidade',
+      detail: 'Pequenas variações detectadas, mas dentro do normal. Ok para salvar.',
+    }
+  }
+  if (jitter < 0.035) {
+    return {
+      level: 'fair',
+      message: 'Qualidade regular',
+      detail: 'A mão teve movimentos bruscos em alguns momentos. Regravar melhora a precisão.',
+    }
+  }
+  return {
+    level: 'poor',
+    message: 'Baixa qualidade',
+    detail: 'A mão estava muito instável. Recomendamos regravar com movimentos mais suaves e controlados.',
+  }
+}
+
+const QUALITY_STYLE: Record<QualityLevel, { bg: string; border: string; text: string; icon: string }> = {
+  great: { bg: 'bg-green-50',  border: 'border-green-200', text: 'text-green-800', icon: '🟢' },
+  good:  { bg: 'bg-green-50',  border: 'border-green-200', text: 'text-green-700', icon: '🟡' },
+  fair:  { bg: 'bg-amber-50',  border: 'border-amber-200', text: 'text-amber-800', icon: '🟠' },
+  poor:  { bg: 'bg-red-50',    border: 'border-red-200',   text: 'text-red-800',   icon: '🔴' },
+}
+
+// ── Componente ────────────────────────────────────────────────────────────────
+
 export function GestureRecorder({ landmarks, isHandDetected }: GestureRecorderProps) {
-  const [name, setName] = useState('')
+  const [name, setName]             = useState('')
   const [isRecording, setIsRecording] = useState(false)
   const [sampleCount, setSampleCount] = useState(0)
-  const [feedback, setFeedback] = useState<'saved' | 'error' | 'saving' | 'sync-error' | null>(null)
-  const [quickTab, setQuickTab] = useState<'alphabet' | 'signs'>('alphabet')
+  const [feedback, setFeedback]     = useState<'saved' | 'error' | 'saving' | 'sync-error' | null>(null)
+  const [quickTab, setQuickTab]     = useState<'alphabet' | 'signs'>('alphabet')
+  const [quality, setQuality]       = useState<RecordingQuality | null>(null)
 
-  const samplesRef = useRef<number[][]>([])
+  const samplesRef        = useRef<number[][]>([])
   const lastSampleTimeRef = useRef(0)
 
   const addGesture = useGestureStore(s => s.addGesture)
@@ -53,11 +135,17 @@ export function GestureRecorder({ landmarks, isHandDetected }: GestureRecorderPr
     samplesRef.current = []
     setSampleCount(0)
     setFeedback(null)
+    setQuality(null)
     lastSampleTimeRef.current = 0
     setIsRecording(true)
   }, [])
 
-  const stopRecording = useCallback(() => setIsRecording(false), [])
+  const stopRecording = useCallback(() => {
+    setIsRecording(false)
+    if (samplesRef.current.length >= MIN_SAMPLES) {
+      setQuality(computeRecordingQuality(samplesRef.current))
+    }
+  }, [])
 
   const save = useCallback(async () => {
     const trimmed = name.trim()
@@ -69,6 +157,7 @@ export function GestureRecorder({ landmarks, isHandDetected }: GestureRecorderPr
     setName('')
     setSampleCount(0)
     samplesRef.current = []
+    setQuality(null)
     setFeedback('saving')
     try {
       await addGesture(trimmed, captured)
@@ -86,7 +175,7 @@ export function GestureRecorder({ landmarks, isHandDetected }: GestureRecorderPr
 
   const progress = Math.min((sampleCount / 40) * 100, 100)
   const canRecord = name.trim().length > 0 && isHandDetected && !isRecording
-  const canSave = !isRecording && sampleCount >= MIN_SAMPLES && feedback !== 'saving'
+  const canSave   = !isRecording && sampleCount >= MIN_SAMPLES && feedback !== 'saving'
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 flex flex-col gap-4">
@@ -95,22 +184,17 @@ export function GestureRecorder({ landmarks, isHandDetected }: GestureRecorderPr
       {/* Seleção rápida */}
       <div>
         <div className="flex gap-1 mb-2 bg-gray-100 p-1 rounded-lg">
-          <button
-            onClick={() => setQuickTab('alphabet')}
-            className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-              quickTab === 'alphabet' ? 'bg-white shadow text-[#1B3A6B]' : 'text-gray-500'
-            }`}
-          >
-            Alfabeto (A–Z)
-          </button>
-          <button
-            onClick={() => setQuickTab('signs')}
-            className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-              quickTab === 'signs' ? 'bg-white shadow text-[#1B3A6B]' : 'text-gray-500'
-            }`}
-          >
-            Sinais comuns
-          </button>
+          {(['alphabet', 'signs'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setQuickTab(tab)}
+              className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                quickTab === tab ? 'bg-white shadow text-[#1B3A6B]' : 'text-gray-500'
+              }`}
+            >
+              {tab === 'alphabet' ? 'Alfabeto (A–Z)' : 'Sinais comuns'}
+            </button>
+          ))}
         </div>
 
         {quickTab === 'alphabet' ? (
@@ -204,8 +288,8 @@ export function GestureRecorder({ landmarks, isHandDetected }: GestureRecorderPr
         </div>
       )}
 
-      {/* Amostras coletadas (pós-gravação) */}
-      {!isRecording && sampleCount > 0 && feedback !== 'saved' && (
+      {/* Amostras coletadas (pós-gravação, sem qualidade ainda) */}
+      {!isRecording && sampleCount > 0 && !quality && feedback !== 'saved' && (
         <p className="text-sm text-gray-500 text-center">
           {sampleCount} amostras coletadas
           {sampleCount < MIN_SAMPLES && (
@@ -214,7 +298,32 @@ export function GestureRecorder({ landmarks, isHandDetected }: GestureRecorderPr
         </p>
       )}
 
-      {/* Feedback */}
+      {/* Indicador de qualidade */}
+      {quality && !isRecording && feedback !== 'saved' && (() => {
+        const s = QUALITY_STYLE[quality.level]
+        return (
+          <div className={`rounded-xl border p-4 ${s.bg} ${s.border}`}>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-base">{s.icon}</span>
+              <span className={`text-sm font-bold ${s.text}`}>{quality.message}</span>
+              <span className="text-xs text-gray-400 ml-auto">{sampleCount} amostras</span>
+            </div>
+            <p className={`text-xs leading-relaxed ${s.text} opacity-90`}>{quality.detail}</p>
+
+            {(quality.level === 'fair' || quality.level === 'poor') && (
+              <button
+                onClick={startRecording}
+                disabled={!isHandDetected}
+                className="mt-3 w-full text-xs font-semibold py-2 rounded-lg border border-current opacity-80 hover:opacity-100 transition-opacity disabled:opacity-40"
+              >
+                ↺ Regravar gesto
+              </button>
+            )}
+          </div>
+        )
+      })()}
+
+      {/* Feedback de salvamento */}
       {feedback === 'saving' && (
         <p className="text-sm text-blue-600 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-center">
           Enviando para o servidor...
