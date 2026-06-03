@@ -3,9 +3,10 @@ import { useCamera } from '@/hooks/useCamera'
 import { useHandTracking } from '@/hooks/useHandTracking'
 import { CanvasOverlay } from './CanvasOverlay'
 import type { Landmark } from '@/types'
+import type { Handedness } from '@/hooks/useHandTracking'
 
 interface CameraFeedProps {
-  onLandmarks?: (landmarks: Landmark[] | null, isHandDetected: boolean) => void
+  onLandmarks?: (landmarks: Landmark[] | null, isHandDetected: boolean, handedness: Handedness | null) => void
   /** Conteúdo renderizado dentro do container do vídeo (ex: ARDisplay) */
   children?: React.ReactNode
 }
@@ -41,13 +42,13 @@ function StatusBadge({
 
 export function CameraFeed({ onLandmarks, children }: CameraFeedProps) {
   const { videoRef, isReady, error, facingMode, toggleCamera, aspectRatio } = useCamera()
-  const { landmarks, isHandDetected, isModelReady, fps } = useHandTracking(videoRef, isReady)
+  const { landmarks, handedness, isHandDetected, isModelReady, fps } = useHandTracking(videoRef, isReady)
 
   const mirrored = facingMode === 'user'
 
   useEffect(() => {
-    onLandmarks?.(landmarks, isHandDetected)
-  }, [landmarks, isHandDetected, onLandmarks])
+    onLandmarks?.(landmarks, isHandDetected, handedness)
+  }, [landmarks, isHandDetected, handedness, onLandmarks])
 
   return (
     <div className="w-full max-w-2xl mx-auto flex flex-col gap-3">

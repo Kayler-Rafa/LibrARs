@@ -3,8 +3,11 @@ import type { Results } from '@/types/mediapipe'
 import { getHandsInstance, sendFrame, handsReady } from '@/lib/mediapipe'
 import type { Landmark } from '@/types'
 
+export type Handedness = 'Left' | 'Right'
+
 export interface UseHandTrackingReturn {
   landmarks: Landmark[] | null
+  handedness: Handedness | null
   isHandDetected: boolean
   isModelReady: boolean
   fps: number
@@ -19,9 +22,10 @@ export function useHandTracking(
   const lastFpsTimeRef = useRef(performance.now())
   const frameCountRef = useRef(0)
 
-  const [landmarks, setLandmarks] = useState<Landmark[] | null>(null)
+  const [landmarks, setLandmarks]     = useState<Landmark[] | null>(null)
+  const [handedness, setHandedness]   = useState<Handedness | null>(null)
   const [isHandDetected, setIsHandDetected] = useState(false)
-  const [isModelReady, setIsModelReady] = useState(false)
+  const [isModelReady, setIsModelReady]     = useState(false)
   const [fps, setFps] = useState(0)
 
   useEffect(() => {
@@ -35,8 +39,11 @@ export function useHandTracking(
       if (lms && lms.length > 0) {
         setLandmarks(lms as Landmark[])
         setIsHandDetected(true)
+        const label = results.multiHandedness?.[0]?.label
+        setHandedness((label === 'Left' || label === 'Right') ? label : null)
       } else {
         setLandmarks(null)
+        setHandedness(null)
         setIsHandDetected(false)
       }
 
@@ -78,5 +85,5 @@ export function useHandTracking(
     return () => cancelAnimationFrame(animFrameRef.current)
   }, [isVideoReady, isModelReady, detect])
 
-  return { landmarks, isHandDetected, isModelReady, fps }
+  return { landmarks, handedness, isHandDetected, isModelReady, fps }
 }

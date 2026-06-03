@@ -2,14 +2,16 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { normalizeLandmarks, landmarksToVector } from '@/lib/classifier'
 import { useGestureStore } from '@/stores/gestureStore'
 import type { Landmark } from '@/types'
+import type { Handedness } from '@/hooks/useHandTracking'
 
 interface GestureRecorderProps {
   landmarks: Landmark[] | null
   isHandDetected: boolean
+  handedness: Handedness | null
 }
 
-const MIN_SAMPLES = 10
-const MAX_SAMPLES = 150
+const MIN_SAMPLES      = 10
+const MAX_SAMPLES      = 150
 const SAMPLE_INTERVAL_MS = 100
 
 const ALPHABET    = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')
@@ -23,128 +25,105 @@ const COMMON_SIGNS = [
 
 // ── Qualidade da gravação ─────────────────────────────────────────────────────
 
-type QualityLevel = 'great' | 'good' | 'fair' | 'poor'
-
 interface RecordingQuality {
-  level: QualityLevel
-  message: string
-  detail: string
+  coverage: number          // 0–1: % do tempo com mão detectada
+  handUsed: Handedness | null
+  sampleCount: number
 }
 
-/**
- * Mede a qualidade da gravação pelo jitter — média das acelerações
- * quadro a quadro normalizadas por dimensão. Funciona para sinais
- * estáticos (jitter baixo = mão firme) e dinâmicos (jitter baixo =
- * movimento suave e controlado).
- */
-function computeRecordingQuality(samples: number[][]): RecordingQuality {
-  const N = samples.length
-  const DIMS = 63
-
-  if (N < 3) {
-    return { level: 'poor', message: 'Poucas amostras', detail: 'Grave por mais tempo para avaliar a qualidade.' }
-  }
-
-  // Velocidades: diferença entre frames consecutivos
-  const velocities = samples.slice(1).map((frame, i) =>
-    frame.map((v, d) => v - samples[i][d])
-  )
-
-  // Acelerações: diferença entre velocidades consecutivas
-  const accelerations = velocities.slice(1).map((vel, i) =>
-    vel.map((v, d) => v - velocities[i][d])
-  )
-
-  if (accelerations.length === 0) {
-    return { level: 'good', message: 'Boa qualidade', detail: 'Gravação dentro do esperado.' }
-  }
-
-  // Jitter = magnitude média das acelerações, normalizada pelo nº de dimensões
-  const jitter = accelerations.reduce((sum, acc) => {
-    const mag = Math.sqrt(acc.reduce((s, v) => s + v * v, 0))
-    return sum + mag / Math.sqrt(DIMS)
-  }, 0) / accelerations.length
-
-  // Penaliza amostras insuficientes — eleva o limiar mínimo para "great"
-  const minSamplesForGreat = 30
-
-  if (jitter < 0.008 && N >= minSamplesForGreat) {
-    return {
-      level: 'great',
-      message: 'Ótima qualidade',
-      detail: 'Mão firme e movimento controlado. Pode salvar com confiança.',
-    }
-  }
-  if (jitter < 0.018) {
-    return {
-      level: 'good',
-      message: 'Boa qualidade',
-      detail: 'Pequenas variações detectadas, mas dentro do normal. Ok para salvar.',
-    }
-  }
-  if (jitter < 0.035) {
-    return {
-      level: 'fair',
-      message: 'Qualidade regular',
-      detail: 'A mão teve movimentos bruscos em alguns momentos. Regravar melhora a precisão.',
-    }
-  }
-  return {
-    level: 'poor',
-    message: 'Baixa qualidade',
-    detail: 'A mão estava muito instável. Recomendamos regravar com movimentos mais suaves e controlados.',
-  }
+function qualityLabel(coverage: number): { icon: string; text: string; detail: string; color: string } {
+  if (coverage >= 0.9)
+    return { icon: '🟢', text: 'Ótima cobertura', detail: 'Mão visível durante toda a gravação.', color: 'text-green-800' }
+  if (coverage >= 0.75)
+    return { icon: '🟡', text: 'Boa cobertura', detail: 'Mão ficou fora do quadro por alguns instantes — ok para salvar.', color: 'text-yellow-800' }
+  if (coverage >= 0.5)
+    return { icon: '🟠', text: 'Cobertura regular', detail: 'A mão sumiu do quadro com frequência. Tente centralizar mais a mão na câmera.', color: 'text-amber-800' }
+  return { icon: '🔴', text: 'Baixa cobertura', detail: 'A câmera mal detectou a mão. Verifique a iluminação e o enquadramento.', color: 'text-red-800' }
 }
 
-const QUALITY_STYLE: Record<QualityLevel, { bg: string; border: string; text: string; icon: string }> = {
-  great: { bg: 'bg-green-50',  border: 'border-green-200', text: 'text-green-800', icon: '🟢' },
-  good:  { bg: 'bg-green-50',  border: 'border-green-200', text: 'text-green-700', icon: '🟡' },
-  fair:  { bg: 'bg-amber-50',  border: 'border-amber-200', text: 'text-amber-800', icon: '🟠' },
-  poor:  { bg: 'bg-red-50',    border: 'border-red-200',   text: 'text-red-800',   icon: '🔴' },
+function bgForCoverage(coverage: number) {
+  if (coverage >= 0.9)  return 'bg-green-50 border-green-200'
+  if (coverage >= 0.75) return 'bg-yellow-50 border-yellow-200'
+  if (coverage >= 0.5)  return 'bg-amber-50 border-amber-200'
+  return 'bg-red-50 border-red-200'
+}
+
+// Câmera frontal espelha a imagem — MediaPipe reporta a mão
+// do ponto de vista da câmera, então "Left" na câmera frontal = mão direita real.
+function handLabel(h: Handedness | null): string {
+  if (!h) return '—'
+  return h === 'Left' ? 'Direita' : 'Esquerda'
 }
 
 // ── Componente ────────────────────────────────────────────────────────────────
 
-export function GestureRecorder({ landmarks, isHandDetected }: GestureRecorderProps) {
-  const [name, setName]             = useState('')
+export function GestureRecorder({ landmarks, isHandDetected, handedness }: GestureRecorderProps) {
+  const [name, setName]               = useState('')
   const [isRecording, setIsRecording] = useState(false)
   const [sampleCount, setSampleCount] = useState(0)
-  const [feedback, setFeedback]     = useState<'saved' | 'error' | 'saving' | 'sync-error' | null>(null)
-  const [quickTab, setQuickTab]     = useState<'alphabet' | 'signs'>('alphabet')
-  const [quality, setQuality]       = useState<RecordingQuality | null>(null)
+  const [feedback, setFeedback]       = useState<'saved' | 'error' | 'saving' | 'sync-error' | null>(null)
+  const [quickTab, setQuickTab]       = useState<'alphabet' | 'signs'>('alphabet')
+  const [quality, setQuality]         = useState<RecordingQuality | null>(null)
 
-  const samplesRef        = useRef<number[][]>([])
-  const lastSampleTimeRef = useRef(0)
+  const samplesRef          = useRef<number[][]>([])
+  const lastSampleTimeRef   = useRef(0)
+  const recordingStartRef   = useRef(0)
+  // Quantos intervalos de 100ms esperávamos ter amostra (= janelas em que a mão deveria estar visível)
+  const expectedSlotsRef    = useRef(0)
+  const detectedSlotsRef    = useRef(0)
+  // Lateralidade dominante durante a gravação
+  const handednessCountRef  = useRef<Record<string, number>>({ Left: 0, Right: 0 })
 
   const addGesture = useGestureStore(s => s.addGesture)
 
   useEffect(() => {
-    if (!isRecording || !landmarks || landmarks.length !== 21) return
-    if (samplesRef.current.length >= MAX_SAMPLES) return
+    if (!isRecording) return
 
     const now = performance.now()
     if (now - lastSampleTimeRef.current < SAMPLE_INTERVAL_MS) return
     lastSampleTimeRef.current = now
 
+    // Conta o slot independente de detectar mão ou não
+    expectedSlotsRef.current++
+
+    if (!landmarks || landmarks.length !== 21) return
+    if (samplesRef.current.length >= MAX_SAMPLES) return
+
+    // Conta slot detectado e registra lateralidade
+    detectedSlotsRef.current++
+    if (handedness) handednessCountRef.current[handedness]++
+
     const vector = landmarksToVector(normalizeLandmarks(landmarks))
     samplesRef.current.push(vector)
     setSampleCount(samplesRef.current.length)
-  }, [landmarks, isRecording])
+  }, [landmarks, isRecording, handedness])
 
   const startRecording = useCallback(() => {
-    samplesRef.current = []
+    samplesRef.current       = []
+    expectedSlotsRef.current = 0
+    detectedSlotsRef.current = 0
+    handednessCountRef.current = { Left: 0, Right: 0 }
+    lastSampleTimeRef.current  = 0
+    recordingStartRef.current  = performance.now()
     setSampleCount(0)
     setFeedback(null)
     setQuality(null)
-    lastSampleTimeRef.current = 0
     setIsRecording(true)
   }, [])
 
   const stopRecording = useCallback(() => {
     setIsRecording(false)
-    if (samplesRef.current.length >= MIN_SAMPLES) {
-      setQuality(computeRecordingQuality(samplesRef.current))
-    }
+
+    const expected = Math.max(expectedSlotsRef.current, 1)
+    const detected = detectedSlotsRef.current
+    const coverage = Math.min(detected / expected, 1)
+
+    const { Left, Right } = handednessCountRef.current
+    const dominant: Handedness | null =
+      Left === 0 && Right === 0 ? null :
+      Left > Right ? 'Left' : 'Right'
+
+    setQuality({ coverage, handUsed: dominant, sampleCount: samplesRef.current.length })
   }, [])
 
   const save = useCallback(async () => {
@@ -169,9 +148,7 @@ export function GestureRecorder({ landmarks, isHandDetected }: GestureRecorderPr
     }
   }, [name, addGesture])
 
-  const selectQuick = (label: string) => {
-    if (!isRecording) setName(label)
-  }
+  const selectQuick = (label: string) => { if (!isRecording) setName(label) }
 
   const progress = Math.min((sampleCount / 40) * 100, 100)
   const canRecord = name.trim().length > 0 && isHandDetected && !isRecording
@@ -288,7 +265,7 @@ export function GestureRecorder({ landmarks, isHandDetected }: GestureRecorderPr
         </div>
       )}
 
-      {/* Amostras coletadas (pós-gravação, sem qualidade ainda) */}
+      {/* Amostras coletadas (pós-gravação sem qualidade ainda) */}
       {!isRecording && sampleCount > 0 && !quality && feedback !== 'saved' && (
         <p className="text-sm text-gray-500 text-center">
           {sampleCount} amostras coletadas
@@ -300,21 +277,33 @@ export function GestureRecorder({ landmarks, isHandDetected }: GestureRecorderPr
 
       {/* Indicador de qualidade */}
       {quality && !isRecording && feedback !== 'saved' && (() => {
-        const s = QUALITY_STYLE[quality.level]
+        const lbl = qualityLabel(quality.coverage)
         return (
-          <div className={`rounded-xl border p-4 ${s.bg} ${s.border}`}>
+          <div className={`rounded-xl border p-4 ${bgForCoverage(quality.coverage)}`}>
+            {/* Cobertura */}
             <div className="flex items-center gap-2 mb-1">
-              <span className="text-base">{s.icon}</span>
-              <span className={`text-sm font-bold ${s.text}`}>{quality.message}</span>
-              <span className="text-xs text-gray-400 ml-auto">{sampleCount} amostras</span>
+              <span className="text-base">{lbl.icon}</span>
+              <span className={`text-sm font-bold ${lbl.color}`}>{lbl.text}</span>
+              <span className="text-xs text-gray-400 ml-auto">
+                {Math.round(quality.coverage * 100)}% detectado
+              </span>
             </div>
-            <p className={`text-xs leading-relaxed ${s.text} opacity-90`}>{quality.detail}</p>
+            <p className={`text-xs leading-relaxed ${lbl.color} opacity-90 mb-3`}>{lbl.detail}</p>
 
-            {(quality.level === 'fair' || quality.level === 'poor') && (
+            {/* Lateralidade */}
+            <div className="flex items-center gap-2 text-xs text-gray-600 bg-white/60 rounded-lg px-3 py-2">
+              <span>✋</span>
+              <span>
+                Mão usada: <strong>{handLabel(quality.handUsed)}</strong>
+              </span>
+              <span className="text-gray-400 ml-1">— use sempre a mesma mão para o mesmo gesto</span>
+            </div>
+
+            {quality.coverage < 0.75 && (
               <button
                 onClick={startRecording}
                 disabled={!isHandDetected}
-                className="mt-3 w-full text-xs font-semibold py-2 rounded-lg border border-current opacity-80 hover:opacity-100 transition-opacity disabled:opacity-40"
+                className={`mt-3 w-full text-xs font-semibold py-2 rounded-lg border ${lbl.color} border-current opacity-80 hover:opacity-100 transition-opacity disabled:opacity-40`}
               >
                 ↺ Regravar gesto
               </button>
