@@ -21,9 +21,9 @@ export interface UseGestureClassifierReturn {
   currentPhrase: string
 }
 
-// Confirmação: quantos frames consecutivos (a ~30fps) para confirmar um gesto
-const CONFIRM_FRAMES_TEMPORAL = 5    // ~167ms — o buffer já tem 1.5s de contexto
-const CONFIRM_FRAMES_STATIC  = 18   // ~600ms — sem contexto temporal, exige mais frames
+// Confirmação baseada em tempo — agnóstica ao FPS do dispositivo (mobile ~2–10fps, desktop ~30fps)
+const CONFIRM_MS_TEMPORAL = 200    // 200ms — buffer temporal já fornece contexto robusto
+const CONFIRM_MS_STATIC   = 600    // 600ms — sem contexto temporal, exige mais tempo
 const COOLDOWN_MS    = 1800
 const PHRASE_RESET_MS = 3000
 
@@ -45,7 +45,7 @@ export function useGestureClassifier(landmarks: Landmark[] | null): UseGestureCl
   const lastSampleTimeRef = useRef<number>(0)
 
   // ── Estado de confirmação ───────────────────────────────────────────────────
-  const candidateRef       = useRef<{ name: string; frames: number } | null>(null)
+  const candidateRef       = useRef<{ name: string; firstSeen: number } | null>(null)
   const lastConfirmedRef   = useRef<string | null>(null)
   const lastConfirmTimeRef = useRef<number>(0)
 
@@ -94,7 +94,7 @@ export function useGestureClassifier(landmarks: Landmark[] | null): UseGestureCl
     const usingTemporal = bufferReady && result !== null &&
       gestures.some(g => g.temporalVectors && g.temporalVectors.length > 0)
 
-    const confirmThreshold = usingTemporal ? CONFIRM_FRAMES_TEMPORAL : CONFIRM_FRAMES_STATIC
+    const confirmMs = usingTemporal ? CONFIRM_MS_TEMPORAL : CONFIRM_MS_STATIC
 
     if (!result) {
       candidateRef.current = null
@@ -106,17 +106,16 @@ export function useGestureClassifier(landmarks: Landmark[] | null): UseGestureCl
     setIsDetecting(true)
     setConfidence(result.confidence)
 
-    if (candidateRef.current?.name === result.name) {
-      candidateRef.current.frames++
-    } else {
-      candidateRef.current = { name: result.name, frames: 1 }
+    if (candidateRef.current?.name !== result.name) {
+      candidateRef.current = { name: result.name, firstSeen: now }
     }
 
-    const framesOk       = candidateRef.current.frames >= confirmThreshold
-    const cooldownOk     = now - lastConfirmTimeRef.current > COOLDOWN_MS
+    const holdDuration      = now - candidateRef.current!.firstSeen
+    const durationOk        = holdDuration >= confirmMs
+    const cooldownOk        = now - lastConfirmTimeRef.current > COOLDOWN_MS
     const differentFromLast = result.name !== lastConfirmedRef.current
 
-    if (framesOk && (cooldownOk || differentFromLast)) {
+    if (durationOk && (cooldownOk || differentFromLast)) {
       lastConfirmedRef.current   = result.name
       lastConfirmTimeRef.current = now
 

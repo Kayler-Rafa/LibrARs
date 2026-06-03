@@ -17,9 +17,14 @@ export async function getHandsInstance(onResults: ResultsCallback): Promise<void
         `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`,
     })
 
+    // Mobile devices struggle with modelComplexity: 1 (~2fps); use 0 for acceptable performance
+    const isMobile =
+      /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+      (navigator.maxTouchPoints > 1 && window.innerWidth < 1024)
+
     instance.setOptions({
       maxNumHands: 1,
-      modelComplexity: 1,
+      modelComplexity: isMobile ? 0 : 1,
       minDetectionConfidence: 0.7,
       minTrackingConfidence: 0.5,
     })
