@@ -29,9 +29,15 @@ export function landmarksToVector(landmarks: Landmark[]): number[] {
 
 // ── Distância euclidiana ──────────────────────────────────────────────────────
 
+// O eixo z do MediaPipe é estimado por depth e varia muito entre pessoas/dispositivos.
+// Nos vetores de 63-dim (x,y,z intercalados) e 252-dim (4 blocos de 63), o z está
+// em todo índice i onde i%3===2. Peso 0.5 reduz o impacto do z sem quebrar os dados gravados.
 function euclidean(a: number[], b: number[]): number {
   let sum = 0
-  for (let i = 0; i < a.length; i++) sum += (a[i] - b[i]) ** 2
+  for (let i = 0; i < a.length; i++) {
+    const d = (a[i] - b[i]) ** 2
+    sum += (i % 3 === 2) ? d * 0.25 : d  // z com peso √0.25 = 0.5
+  }
   return Math.sqrt(sum)
 }
 
@@ -79,7 +85,7 @@ export function knnClassify(
   gestures: GestureEntry[],
   k = 5,
   voteThreshold = 0.6,
-  distThreshold = 1.5  // amplo o suficiente para variação entre pessoas diferentes
+  distThreshold = 1.2  // z-damped: equivale a ~1.5 sem amortecimento
 ): ClassificationResult | null {
   if (gestures.length === 0) return null
 
