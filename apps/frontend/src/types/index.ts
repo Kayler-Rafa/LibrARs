@@ -7,7 +7,8 @@ export interface Landmark {
 export interface GestureEntry {
   id: string
   name: string
-  samples: number[][] // array de vetores 63-dim
+  samples: number[][]          // vetores 63-dim comprimidos (fallback estático)
+  temporalVectors?: number[][] // vetores 252-dim por gravação (classificação temporal)
   sampleCount: number
   createdAt: string
   updatedAt: string

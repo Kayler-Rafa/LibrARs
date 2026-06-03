@@ -20,8 +20,9 @@ CREATE TABLE IF NOT EXISTS gestures (
   id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id      UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name         TEXT        NOT NULL,
-  samples      JSONB       NOT NULL DEFAULT '[]', -- amostras comprimidas (para classificação)
-  samples_raw  JSONB       NOT NULL DEFAULT '[]', -- amostras originais brutas (para pesquisa)
+  samples          JSONB       NOT NULL DEFAULT '[]', -- amostras comprimidas (para classificação)
+  samples_raw      JSONB       NOT NULL DEFAULT '[]', -- amostras originais brutas (para pesquisa)
+  samples_temporal JSONB       NOT NULL DEFAULT '[]', -- vetor temporal 252-dim pré-computado
   sample_count INT         NOT NULL DEFAULT 0,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),

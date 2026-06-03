@@ -5,7 +5,6 @@ import Dashboard from '@/pages/Dashboard'
 import Translate from '@/pages/Translate'
 import Train from '@/pages/Train'
 import Library from '@/pages/Library'
-import Speech from '@/pages/Speech'
 import Call from '@/pages/Call'
 import AdminDashboard from '@/pages/AdminDashboard'
 import InviteRegister from '@/pages/InviteRegister'
@@ -30,7 +29,6 @@ const appNavItems = [
   { to: '/treinar',  label: 'Treinar',  icon: '🏋️' },
   { to: '/biblioteca', label: 'Biblioteca', icon: '📚' },
   { to: '/chamada',  label: 'Chamada',  icon: '📞' },
-  { to: '/fala',     label: 'Fala',     icon: '🔊' },
 ]
 
 // ── Navbar autenticada ────────────────────────────────────────────────────────
@@ -264,7 +262,6 @@ function AppContent() {
           <Route path="/treinar"    element={isAuthenticated ? <Train />          : <Navigate to="/" replace />} />
           <Route path="/biblioteca" element={isAuthenticated ? <Library />        : <Navigate to="/" replace />} />
           <Route path="/chamada"    element={isAuthenticated ? <Call />           : <Navigate to="/" replace />} />
-          <Route path="/fala"       element={isAuthenticated ? <Speech />         : <Navigate to="/" replace />} />
           <Route path="/admin"      element={isAuthenticated ? <AdminDashboard /> : <Navigate to="/" replace />} />
           <Route path="*"           element={<Navigate to={isAuthenticated ? '/dashboard' : '/'} replace />} />
         </Routes>

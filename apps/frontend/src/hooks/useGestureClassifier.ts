@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState, useMemo } from 'react'
 import { useGestureStore } from '@/stores/gestureStore'
-import { normalizeLandmarks, landmarksToVector, knnClassify } from '@/lib/classifier'
+import {
+  normalizeLandmarks,
+  landmarksToVector,
+  knnClassify,
+  temporalKnnClassify,
+} from '@/lib/classifier'
 import type { Landmark } from '@/types'
 
 export interface HistoryEntry {
@@ -16,38 +21,49 @@ export interface UseGestureClassifierReturn {
   currentPhrase: string
 }
 
-const CONFIRM_FRAMES = 18      // frames consecutivos para confirmar gesto (~0.6s a 30fps)
-const COOLDOWN_MS = 1800       // intervalo mínimo entre confirmações
-const PHRASE_RESET_MS = 3000   // sem novo gesto após Xs → frase encerrada
+// Confirmação: quantos frames consecutivos (a ~30fps) para confirmar um gesto
+const CONFIRM_FRAMES_TEMPORAL = 5    // ~167ms — o buffer já tem 1.5s de contexto
+const CONFIRM_FRAMES_STATIC  = 18   // ~600ms — sem contexto temporal, exige mais frames
+const COOLDOWN_MS    = 1800
+const PHRASE_RESET_MS = 3000
+
+// Buffer rolante: 15 amostras × 100ms = 1.5s de contexto temporal
+const BUFFER_SIZE       = 15
+const SAMPLE_INTERVAL_MS = 100
 
 export function useGestureClassifier(landmarks: Landmark[] | null): UseGestureClassifierReturn {
-  const ownGestures = useGestureStore(s => s.gestures)
+  const ownGestures        = useGestureStore(s => s.gestures)
   const collectiveGestures = useGestureStore(s => s.collectiveGestures)
 
-  // Combina gestos próprios + base coletiva (de todos os participantes).
-  // useMemo evita recriar o array a cada frame.
   const gestures = useMemo(
     () => [...ownGestures, ...collectiveGestures],
     [ownGestures, collectiveGestures]
   )
 
-  const candidateRef = useRef<{ name: string; frames: number } | null>(null)
-  const lastConfirmedRef = useRef<string | null>(null)
+  // ── Buffer rolante de vetores normalizados (amostrado a 100ms) ──────────────
+  const frameBufferRef    = useRef<number[][]>([])
+  const lastSampleTimeRef = useRef<number>(0)
+
+  // ── Estado de confirmação ───────────────────────────────────────────────────
+  const candidateRef       = useRef<{ name: string; frames: number } | null>(null)
+  const lastConfirmedRef   = useRef<string | null>(null)
   const lastConfirmTimeRef = useRef<number>(0)
-  const phraseWordsRef = useRef<string[]>([])
-  const phraseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // ── Frase acumulada ─────────────────────────────────────────────────────────
+  const phraseWordsRef  = useRef<string[]>([])
+  const phraseTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [currentGesture, setCurrentGesture] = useState<string | null>(null)
-  const [confidence, setConfidence] = useState(0)
-  const [isDetecting, setIsDetecting] = useState(false)
-  const [history, setHistory] = useState<HistoryEntry[]>([])
-  const [currentPhrase, setCurrentPhrase] = useState('')
+  const [confidence, setConfidence]         = useState(0)
+  const [isDetecting, setIsDetecting]       = useState(false)
+  const [history, setHistory]               = useState<HistoryEntry[]>([])
+  const [currentPhrase, setCurrentPhrase]   = useState('')
 
   useEffect(() => {
     if (!landmarks || landmarks.length !== 21 || gestures.length === 0) {
-      // Mão saiu do frame — zera tudo para não herdar estado anterior
-      candidateRef.current = null
-      lastConfirmedRef.current = null
+      frameBufferRef.current    = []
+      candidateRef.current      = null
+      lastConfirmedRef.current  = null
       lastConfirmTimeRef.current = 0
       setIsDetecting(false)
       setCurrentGesture(null)
@@ -55,8 +71,30 @@ export function useGestureClassifier(landmarks: Landmark[] | null): UseGestureCl
       return
     }
 
+    const now    = performance.now()
     const vector = landmarksToVector(normalizeLandmarks(landmarks))
-    const result = knnClassify(vector, gestures)
+
+    // Amostra o buffer a 100ms para coincidir com a taxa de gravação
+    if (now - lastSampleTimeRef.current >= SAMPLE_INTERVAL_MS) {
+      lastSampleTimeRef.current = now
+      const buf = frameBufferRef.current
+      frameBufferRef.current = buf.length >= BUFFER_SIZE
+        ? [...buf.slice(1), vector]   // desliza a janela
+        : [...buf, vector]
+    }
+
+    const buf = frameBufferRef.current
+    const bufferReady = buf.length >= Math.ceil(BUFFER_SIZE * 0.7) // 70% cheio (~1s)
+
+    // Tenta classificação temporal primeiro; cai no estático se não disponível
+    const result = bufferReady
+      ? (temporalKnnClassify(buf, gestures) ?? knnClassify(vector, gestures))
+      : knnClassify(vector, gestures)
+
+    const usingTemporal = bufferReady && result !== null &&
+      gestures.some(g => g.temporalVectors && g.temporalVectors.length > 0)
+
+    const confirmThreshold = usingTemporal ? CONFIRM_FRAMES_TEMPORAL : CONFIRM_FRAMES_STATIC
 
     if (!result) {
       candidateRef.current = null
@@ -68,27 +106,26 @@ export function useGestureClassifier(landmarks: Landmark[] | null): UseGestureCl
     setIsDetecting(true)
     setConfidence(result.confidence)
 
-    // Acumula frames consecutivos do mesmo gesto
     if (candidateRef.current?.name === result.name) {
       candidateRef.current.frames++
     } else {
       candidateRef.current = { name: result.name, frames: 1 }
     }
 
-    const now = performance.now()
-    const framesOk = candidateRef.current.frames >= CONFIRM_FRAMES
-    const cooldownOk = now - lastConfirmTimeRef.current > COOLDOWN_MS
+    const framesOk       = candidateRef.current.frames >= confirmThreshold
+    const cooldownOk     = now - lastConfirmTimeRef.current > COOLDOWN_MS
     const differentFromLast = result.name !== lastConfirmedRef.current
 
     if (framesOk && (cooldownOk || differentFromLast)) {
-      lastConfirmedRef.current = result.name
+      lastConfirmedRef.current   = result.name
       lastConfirmTimeRef.current = now
 
-      const ts = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      const ts = new Date().toLocaleTimeString('pt-BR', {
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+      })
       setCurrentGesture(result.name)
       setHistory(prev => [{ gesture: result.name, timestamp: ts }, ...prev].slice(0, 10))
 
-      // Modo frase: acumula palavras e reinicia timer de 3s
       phraseWordsRef.current = [...phraseWordsRef.current, result.name]
       setCurrentPhrase(phraseWordsRef.current.join(' '))
 
@@ -101,7 +138,6 @@ export function useGestureClassifier(landmarks: Landmark[] | null): UseGestureCl
     }
   }, [landmarks, gestures])
 
-  // Limpa o timer ao desmontar
   useEffect(() => {
     return () => {
       if (phraseTimerRef.current) clearTimeout(phraseTimerRef.current)

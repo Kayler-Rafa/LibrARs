@@ -36,6 +36,7 @@ export interface ApiGesture {
   id: string
   name: string
   samples: number[][]
+  temporal_features?: number[]   // vetor 252-dim pré-computado pelo backend
   sample_count: number
   created_at: string
   updated_at?: string
@@ -148,7 +149,7 @@ export const api = {
       req<ApiGesture[]>(`/api/gestures/user/${userId}`),
 
     collectiveDataset: () =>
-      req<Array<{ name: string; samples: number[][] }>>('/api/gestures/dataset'),
+      req<Array<{ name: string; samples: number[][]; temporal_vectors?: number[][] }>>('/api/gestures/dataset'),
   },
 
   admin: {

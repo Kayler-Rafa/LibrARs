@@ -55,6 +55,7 @@ async def run_migrations():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_student BOOLEAN NOT NULL DEFAULT false",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS has_disability BOOLEAN NOT NULL DEFAULT false",
         "ALTER TABLE gestures ADD COLUMN IF NOT EXISTS samples_raw JSONB NOT NULL DEFAULT '[]'::jsonb",
+        "ALTER TABLE gestures ADD COLUMN IF NOT EXISTS samples_temporal JSONB NOT NULL DEFAULT '[]'::jsonb",
 
         # Índices
         "CREATE INDEX IF NOT EXISTS idx_gestures_user_id ON gestures(user_id)",

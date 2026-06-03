@@ -5,20 +5,28 @@ from ..auth.deps import get_current_user
 from ..ml.classifier import weighted_knn
 from ..ml.compressor import compress_samples
 from ..ml.quality import filter_outliers
+from ..ml.temporal import extract_temporal_features
 from .schemas import GestureCreate, ClassifyRequest, CompressRequest
 
 router = APIRouter()
 
 
+def _parse_jsonb(value) -> list:
+    if isinstance(value, list):
+        return value
+    if value:
+        return json.loads(value)
+    return []
+
+
 def _row_to_out(row: dict) -> dict:
-    raw = row["samples"]
-    samples: list = raw if isinstance(raw, list) else json.loads(raw)
     ca = row["created_at"]
     ua = row["updated_at"]
     return {
         "id": str(row["id"]),
         "name": row["name"],
-        "samples": samples,
+        "samples": _parse_jsonb(row["samples"]),
+        "temporal_features": _parse_jsonb(row.get("samples_temporal") or []),
         "sample_count": row["sample_count"],
         "created_at": ca.isoformat() if hasattr(ca, "isoformat") else str(ca),
         "updated_at": ua.isoformat() if hasattr(ua, "isoformat") else str(ua),
@@ -28,7 +36,7 @@ def _row_to_out(row: dict) -> dict:
 @router.get("")
 async def list_gestures(current_user: dict = Depends(get_current_user)):
     rows = await db.fetch(
-        "SELECT id, name, samples, sample_count, created_at, updated_at"
+        "SELECT id, name, samples, samples_temporal, sample_count, created_at, updated_at"
         " FROM gestures WHERE user_id = $1 ORDER BY created_at ASC",
         current_user["user_id"],
     )
@@ -39,32 +47,39 @@ async def list_gestures(current_user: dict = Depends(get_current_user)):
 async def collective_dataset(_: dict = Depends(get_current_user)):
     """
     Base coletiva: amostras de TODOS os participantes agregadas por nome de gesto.
-    Usada pela tradução para reconhecer letras treinadas por toda a comunidade.
-    Retorna apenas nome + amostras (sem identificar quem treinou) e limita a
-    quantidade por gesto para não pesar o classificador no navegador.
+    Retorna amostras comprimidas (compatibilidade) + vetor temporal de cada gravação
+    (para o classificador temporal no navegador).
     """
-    CAP_PER_NAME = 120  # máximo de amostras agregadas por letra/gesto
+    CAP_PER_NAME = 120
 
     rows = await db.fetch(
-        "SELECT name, samples FROM gestures ORDER BY updated_at DESC"
+        "SELECT name, samples, samples_temporal FROM gestures ORDER BY updated_at DESC"
     )
-    agg: dict[str, list] = {}
+
+    agg: dict[str, dict] = {}
     for r in rows:
         name = r["name"]
-        samples = r["samples"] if isinstance(r["samples"], list) else json.loads(r["samples"])
-        bucket = agg.setdefault(name, [])
-        if len(bucket) < CAP_PER_NAME:
-            bucket.extend(samples)
+        samples = _parse_jsonb(r["samples"])
+        temporal = _parse_jsonb(r.get("samples_temporal") or [])
+
+        bucket = agg.setdefault(name, {"samples": [], "temporal_vectors": []})
+        if len(bucket["samples"]) < CAP_PER_NAME:
+            bucket["samples"].extend(samples[:CAP_PER_NAME - len(bucket["samples"])])
+        if temporal:
+            bucket["temporal_vectors"].append(temporal)
 
     return [
-        {"name": name, "samples": samples[:CAP_PER_NAME]}
-        for name, samples in agg.items()
+        {
+            "name": name,
+            "samples": data["samples"][:CAP_PER_NAME],
+            "temporal_vectors": data["temporal_vectors"],
+        }
+        for name, data in agg.items()
     ]
 
 
 @router.get("/user/{user_id}")
 async def list_user_gestures(user_id: str, current_user: dict = Depends(get_current_user)):
-    # Apenas o próprio usuário pode ver seus gestos
     if str(current_user["user_id"]) != user_id:
         raise HTTPException(403, "Acesso negado")
 
@@ -77,7 +92,7 @@ async def list_user_gestures(user_id: str, current_user: dict = Depends(get_curr
         {
             "id": str(r["id"]),
             "name": r["name"],
-            "samples": r["samples"] if isinstance(r["samples"], list) else json.loads(r["samples"]),
+            "samples": _parse_jsonb(r["samples"]),
             "sample_count": r["sample_count"],
         }
         for r in rows
@@ -89,33 +104,34 @@ async def upsert_gesture(
     body: GestureCreate,
     current_user: dict = Depends(get_current_user),
 ):
-    # Preserva todas as amostras brutas originais (dado de pesquisa)
     raw_samples = body.samples
 
-    # Versão comprimida apenas para classificação local
     clean, _ = filter_outliers(body.samples)
     compressed = compress_samples(clean, n_clusters=20)
 
+    # Extrai vetor temporal 252-dim a partir da sequência bruta de frames
+    temporal_features = extract_temporal_features(raw_samples)
+
     gesture_name = body.name.strip().upper()
 
-    # ON CONFLICT por (user_id, name) garante que o mesmo gesto gravado em
-    # dispositivos diferentes não gera duplicatas nem viola a constraint.
     row = await db.fetchrow(
         """
-        INSERT INTO gestures (id, user_id, name, samples, samples_raw, sample_count)
-        VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4::jsonb, $5::jsonb, $6)
+        INSERT INTO gestures (id, user_id, name, samples, samples_raw, samples_temporal, sample_count)
+        VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7)
         ON CONFLICT (user_id, name) DO UPDATE
-          SET samples      = EXCLUDED.samples,
-              samples_raw  = EXCLUDED.samples_raw,
-              sample_count = EXCLUDED.sample_count,
-              updated_at   = now()
-        RETURNING id, name, samples, sample_count, created_at, updated_at
+          SET samples          = EXCLUDED.samples,
+              samples_raw      = EXCLUDED.samples_raw,
+              samples_temporal = EXCLUDED.samples_temporal,
+              sample_count     = EXCLUDED.sample_count,
+              updated_at       = now()
+        RETURNING id, name, samples, samples_temporal, sample_count, created_at, updated_at
         """,
         body.id if body.id else None,
         current_user["user_id"],
         gesture_name,
-        compressed,      # codec JSONB serializa automaticamente
-        raw_samples,     # idem
+        compressed,
+        raw_samples,
+        temporal_features,
         len(compressed),
     )
     return _row_to_out(row)

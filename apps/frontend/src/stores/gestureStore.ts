@@ -20,7 +20,7 @@ interface GestureStore {
   loadFromApi: () => Promise<void>
   loadCollectiveDataset: () => Promise<number>  // retorna nº de letras carregadas
   mergeFromApi: (apiGestures: { id: string; name: string; samples: number[][];
-    sample_count: number; created_at: string; updated_at?: string }[]) => void
+    temporal_features?: number[]; sample_count: number; created_at: string; updated_at?: string }[]) => void
 }
 
 function isAuthed(): boolean {
@@ -58,11 +58,18 @@ export const useGestureStore = create<GestureStore>()(
 
         try {
           const saved = await api.gestures.upsert({ id, name, samples })
-          // Atualiza com o ID e amostras confirmados pelo servidor
+          // Atualiza com o ID, amostras e vetor temporal confirmados pelo servidor
           set(state => ({
             gestures: state.gestures.map(g =>
               g.id === id
-                ? { ...g, id: saved.id, samples: saved.samples, sampleCount: saved.sample_count, syncStatus: 'synced' }
+                ? {
+                    ...g,
+                    id: saved.id,
+                    samples: saved.samples,
+                    temporalVectors: saved.temporal_features ? [saved.temporal_features] : undefined,
+                    sampleCount: saved.sample_count,
+                    syncStatus: 'synced',
+                  }
                 : g
             ),
             pendingSync: state.gestures.some(g => g.id !== id && g.syncStatus === 'error'),
@@ -224,6 +231,7 @@ export const useGestureStore = create<GestureStore>()(
           id: `collective-${d.name}`,
           name: d.name,
           samples: d.samples,
+          temporalVectors: d.temporal_vectors ?? [],
           sampleCount: d.samples.length,
           createdAt: now,
           updatedAt: now,
@@ -243,12 +251,14 @@ export const useGestureStore = create<GestureStore>()(
 
           for (const ag of apiGestures) {
             const existing = localMap.get(ag.id)
+            const temporalVectors = ag.temporal_features ? [ag.temporal_features] : undefined
             if (!existing) {
               // Gesto existe no banco mas não localmente — adiciona
               localMap.set(ag.id, {
                 id: ag.id,
                 name: ag.name,
                 samples: ag.samples,
+                temporalVectors,
                 sampleCount: ag.sample_count,
                 createdAt: ag.created_at,
                 updatedAt: ag.updated_at ?? ag.created_at,
@@ -263,6 +273,7 @@ export const useGestureStore = create<GestureStore>()(
                 localMap.set(ag.id, {
                   ...existing,
                   samples: ag.samples,
+                  temporalVectors,
                   sampleCount: ag.sample_count,
                   updatedAt: ag.updated_at ?? ag.created_at,
                   syncStatus: 'synced',
