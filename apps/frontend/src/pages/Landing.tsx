@@ -4,26 +4,24 @@ import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/authStore'
 import { useGestureStore } from '@/stores/gestureStore'
 
+const FORMS_URL = 'https://forms.gle/b2QQvNKTUgY7BH9s8'
+
 export default function Landing() {
   const navigate = useNavigate()
   const { setAuth } = useAuthStore()
   const loadFromApi = useGestureStore(s => s.loadFromApi)
 
-  const [mode, setMode] = useState<'login' | 'register'>('login')
-  const [email, setEmail] = useState('')
+  const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
-  const [name, setName] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [loading, setLoading]   = useState(false)
+  const [error, setError]       = useState('')
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: { preventDefault(): void }) {
     e.preventDefault()
     setError('')
     setLoading(true)
     try {
-      const res = mode === 'login'
-        ? await api.auth.login(email, password)
-        : await api.auth.register(email, password, name)
+      const res = await api.auth.login(email, password)
       setAuth(res.token, res.user)
       loadFromApi().catch(() => null)
       navigate('/dashboard', { replace: true })
@@ -72,7 +70,7 @@ export default function Landing() {
               </h1>
 
               <p className="text-blue-100 text-base md:text-lg max-w-lg mx-auto lg:mx-0 leading-relaxed">
-                O LibrARs usa inteligência artificial e visão computacional para traduzir gestos de Libras em texto e voz — e também converter fala em Libras — direto no navegador, sem instalação.
+                O LibrARs usa inteligência artificial e visão computacional para traduzir gestos de Libras em texto e voz — direto no navegador, sem instalação.
               </p>
 
               <div className="flex flex-wrap gap-3 justify-center lg:justify-start">
@@ -83,7 +81,8 @@ export default function Landing() {
 
               <div className="flex flex-col sm:flex-row gap-3 justify-center lg:justify-start pt-2">
                 <a
-                  href="#participar"
+                  href={FORMS_URL}
+                  target="_blank" rel="noopener noreferrer"
                   className="bg-white text-[#1B3A6B] px-6 py-3 rounded-xl font-bold hover:bg-blue-50 transition-colors text-sm shadow-lg text-center"
                 >
                   Participar da pesquisa
@@ -97,34 +96,12 @@ export default function Landing() {
               </div>
             </div>
 
-            {/* Formulário de acesso */}
+            {/* Formulário de acesso — somente login */}
             <div id="auth-form" className="bg-white rounded-2xl shadow-2xl p-6 md:p-8 text-gray-900 w-full max-w-md mx-auto lg:mx-0">
-              {/* Tabs */}
-              <div className="flex rounded-xl bg-gray-100 p-1 mb-5">
-                {(['login', 'register'] as const).map(m => (
-                  <button
-                    key={m}
-                    onClick={() => { setMode(m); setError('') }}
-                    className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all ${
-                      mode === m ? 'bg-white shadow-sm text-[#1B3A6B]' : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    {m === 'login' ? 'Entrar' : 'Cadastrar'}
-                  </button>
-                ))}
-              </div>
+              <h2 className="text-lg font-extrabold text-[#1B3A6B] mb-1">Acessar a plataforma</h2>
+              <p className="text-xs text-gray-400 mb-5">Acesso exclusivo para participantes convidados</p>
 
               <form onSubmit={handleSubmit} className="space-y-4">
-                {mode === 'register' && (
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">Nome</label>
-                    <input
-                      type="text" value={name} onChange={e => setName(e.target.value)}
-                      placeholder="Seu nome completo"
-                      className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] focus:border-transparent transition bg-gray-50 focus:bg-white"
-                    />
-                  </div>
-                )}
                 <div>
                   <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">Email</label>
                   <input
@@ -150,30 +127,20 @@ export default function Landing() {
                   type="submit" disabled={loading}
                   className="w-full bg-[#2E75B6] hover:bg-[#1B3A6B] text-white font-bold py-3.5 rounded-xl transition-colors disabled:opacity-60 text-sm shadow-md shadow-blue-100"
                 >
-                  {loading ? 'Aguarde...' : mode === 'login' ? 'Entrar na plataforma' : 'Criar conta'}
+                  {loading ? 'Aguarde...' : 'Entrar na plataforma'}
                 </button>
               </form>
 
-              {mode === 'register' && (
-                <div className="mt-4 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
-                  <p className="text-xs text-blue-800 leading-relaxed">
-                    O cadastro aberto é exclusivo para o primeiro acesso (administrador).
-                    Novos participantes entram por <strong>link de convite</strong> — solicite pelo email{' '}
-                    <a href="mailto:labelleecandido@gmail.com" className="font-bold underline">
-                      labelleecandido@gmail.com
-                    </a>
-                  </p>
-                </div>
-              )}
-
-              {mode === 'login' && (
-                <p className="text-xs text-gray-400 mt-4 text-center">
-                  Não tem acesso?{' '}
-                  <a href="#participar" className="text-[#2E75B6] font-semibold hover:underline">
-                    Saiba como participar
-                  </a>
-                </p>
-              )}
+              <div className="mt-5 border-t border-gray-100 pt-4 text-center">
+                <p className="text-xs text-gray-400 mb-3">Ainda não participa da pesquisa?</p>
+                <a
+                  href={FORMS_URL}
+                  target="_blank" rel="noopener noreferrer"
+                  className="inline-block w-full bg-[#F4F7FC] border border-gray-200 text-[#1B3A6B] font-bold py-3 rounded-xl text-sm hover:bg-blue-50 hover:border-[#2E75B6] transition-colors text-center"
+                >
+                  Quero me inscrever
+                </a>
+              </div>
             </div>
           </div>
         </div>
@@ -326,11 +293,12 @@ export default function Landing() {
               </div>
             </div>
 
+            {/* Card de inscrição */}
             <div className="bg-white/10 border border-white/20 rounded-2xl p-6 md:p-8 text-center space-y-5">
               <div className="text-5xl">🤝</div>
               <h3 className="text-xl font-extrabold">Quero participar</h3>
               <p className="text-blue-100 text-sm leading-relaxed">
-                O acesso à plataforma é por convite. Entre em contato com os pesquisadores responsáveis para receber seu link de cadastro.
+                Preencha o formulário de inscrição. Após a análise, você receberá seu link de acesso por email para começar a contribuir com a pesquisa.
               </p>
               <div className="bg-white/10 rounded-xl p-4 text-left space-y-2">
                 <p className="text-xs font-bold text-blue-200 uppercase tracking-wide">Pesquisadores responsáveis</p>
@@ -338,8 +306,15 @@ export default function Landing() {
                 <p className="text-sm font-semibold">Rafael Diniz</p>
               </div>
               <a
+                href={FORMS_URL}
+                target="_blank" rel="noopener noreferrer"
+                className="block w-full bg-white text-[#1B3A6B] py-3.5 rounded-xl font-bold hover:bg-blue-50 transition-colors text-sm shadow-lg"
+              >
+                Preencher formulário de inscrição →
+              </a>
+              <a
                 href="#auth-form"
-                className="block w-full bg-white text-[#1B3A6B] py-3 rounded-xl font-bold hover:bg-blue-50 transition-colors text-sm"
+                className="block w-full bg-white/10 border border-white/30 text-white py-3 rounded-xl font-semibold hover:bg-white/20 transition-colors text-sm"
               >
                 Já tenho acesso — Entrar
               </a>
@@ -439,6 +414,13 @@ export default function Landing() {
               <p className="text-xs text-gray-500 mt-1">Reconhecimento Inteligente de Libras em Tempo Real</p>
             </div>
             <div className="flex flex-wrap justify-center gap-x-6 gap-y-2 text-xs">
+              <a
+                href={FORMS_URL}
+                target="_blank" rel="noopener noreferrer"
+                className="hover:text-white transition-colors"
+              >
+                Inscrever-se na pesquisa
+              </a>
               <a
                 href="https://github.com/Kayler-Rafa/LibrARs"
                 target="_blank" rel="noopener noreferrer"
