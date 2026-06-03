@@ -293,10 +293,8 @@ export function GestureRecorder({ landmarks, isHandDetected, handedness }: Gestu
             {/* Lateralidade */}
             <div className="flex items-center gap-2 text-xs text-gray-600 bg-white/60 rounded-lg px-3 py-2">
               <span>✋</span>
-              <span>
-                Mão usada: <strong>{handLabel(quality.handUsed)}</strong>
-              </span>
-              <span className="text-gray-400 ml-1">— use sempre a mesma mão para o mesmo gesto</span>
+              <span>Mão usada nesta gravação: <strong>{handLabel(quality.handUsed)}</strong></span>
+              <span className="text-gray-400 ml-1">— gravar com ambas as mãos aumenta a precisão</span>
             </div>
 
             {quality.coverage < 0.75 && (
