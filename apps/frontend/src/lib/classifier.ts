@@ -79,7 +79,7 @@ export function knnClassify(
   gestures: GestureEntry[],
   k = 5,
   voteThreshold = 0.6,
-  distThreshold = 1.0  // relaxado de 0.85 para reconhecimento cruzado entre pessoas
+  distThreshold = 1.5  // amplo o suficiente para variação entre pessoas diferentes
 ): ClassificationResult | null {
   if (gestures.length === 0) return null
 
@@ -125,7 +125,7 @@ export function temporalKnnClassify(
   gestures: GestureEntry[],
   k = 5,
   voteThreshold = 0.6,
-  distThreshold = 2.5  // relaxado de 2.0 para reconhecimento cruzado entre pessoas
+  distThreshold = 3.5  // amplo o suficiente para variação entre pessoas diferentes
 ): ClassificationResult | null {
   const withTemporal = gestures.filter(g => g.temporalVectors && g.temporalVectors.length > 0)
   if (withTemporal.length === 0) return null
