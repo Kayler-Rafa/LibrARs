@@ -109,7 +109,7 @@ async def upsert_gesture(
     clean, _ = filter_outliers(body.samples)
     compressed = compress_samples(clean, n_clusters=20)
 
-    # Extrai vetor temporal 252-dim a partir da sequência bruta de frames
+    # Extrai vetor temporal 315-dim a partir da sequência bruta de frames
     temporal_features = extract_temporal_features(raw_samples)
 
     gesture_name = body.name.strip().upper()

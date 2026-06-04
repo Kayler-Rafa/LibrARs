@@ -37,7 +37,26 @@ export function useHandTracking(
 
       const lms = results.multiHandLandmarks?.[0]
       if (lms && lms.length > 0) {
-        setLandmarks(lms as Landmark[])
+        // ── Correção de aspect ratio ──────────────────────────────────────────
+        // O MediaPipe entrega x e y como fracções das dimensões do vídeo (0–1).
+        // Em Paisagem (16:9) um delta-x de 0.1 representa ~178px, mas em
+        // Retrato (9:16) representa apenas ~56px — o mesmo gesto gera vetores
+        // diferentes entre PC e mobile, quebrando o KNN cross-device.
+        //
+        // Solução: multiplicar x por (videoWidth / videoHeight) converte para
+        // um espaço quadrado neutro (1:1) onde deltas-x e deltas-y têm a mesma
+        // escala em píxeis físicos, independentemente da orientação do ecrã.
+        // A nossa normalização pelo pulso actua depois, já em espaço consistente.
+        const video = videoRef.current
+        const vw = video?.videoWidth  ?? 0
+        const vh = video?.videoHeight ?? 0
+        const ar = (vw > 0 && vh > 0) ? vw / vh : 1.0
+
+        const corrected: Landmark[] = ar === 1.0
+          ? (lms as Landmark[])
+          : (lms as Landmark[]).map(lm => ({ x: lm.x * ar, y: lm.y, z: lm.z }))
+
+        setLandmarks(corrected)
         setIsHandDetected(true)
         const label = results.multiHandedness?.[0]?.label
         setHandedness((label === 'Left' || label === 'Right') ? label : null)

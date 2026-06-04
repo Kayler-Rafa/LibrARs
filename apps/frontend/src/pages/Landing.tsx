@@ -60,7 +60,7 @@ export default function Landing() {
             {/* Texto */}
             <div className="space-y-6 text-center lg:text-left">
               <span className="inline-block bg-white/10 backdrop-blur-sm border border-white/20 px-4 py-1.5 rounded-full text-xs font-bold tracking-widest uppercase">
-                Projeto de Pesquisa Científica · UFRJ
+                Projeto de Pesquisa Científica · 
               </span>
 
               <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold leading-tight">
@@ -154,7 +154,7 @@ export default function Landing() {
             {[
               { n: '10 milhões',  label: 'de brasileiros com algum grau de surdez', src: 'IBGE, 2023' },
               { n: 'Lei 10.436', label: 'garante Libras como língua oficial desde', src: '2002' },
-              { n: 'menos de 5 min', label: 'para gravar cada gesto e contribuir', src: 'por gesto' },
+              { n: 'menos de 5min', label: 'para gravar cada gesto e contribuir', src: 'por gesto' },
               { n: 'Nenhum',     label: 'banco de dados público de Libras existe no Brasil', src: 'até agora' },
             ].map((s, i) => (
               <div key={i} className="space-y-1">
@@ -298,7 +298,7 @@ export default function Landing() {
 
               <div className="space-y-3">
                 {[
-                  { n: '1', title: 'Preencha o formulário', desc: 'Leva 2 minutos. Só precisa do seu nome e e-mail.' },
+                  { n: '1', title: 'Preencha o formulário', desc: 'Leva 2 minutos.' },
                   { n: '2', title: 'Receba o convite por e-mail', desc: 'Após análise pela equipe, você recebe um link de acesso.' },
                   { n: '3', title: 'Acesse a plataforma', desc: 'Pelo navegador, sem instalar nada.' },
                   { n: '4', title: 'Grave os gestos', desc: 'Siga as instruções na tela. Cada gesto leva ~5 minutos.' },

@@ -8,7 +8,7 @@ export interface GestureEntry {
   id: string
   name: string
   samples: number[][]          // vetores 63-dim comprimidos (fallback estático)
-  temporalVectors?: number[][] // vetores 252-dim por gravação (classificação temporal)
+  temporalVectors?: number[][] // vetores 315-dim por gravação (classificação temporal)
   sampleCount: number
   createdAt: string
   updatedAt: string
