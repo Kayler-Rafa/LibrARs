@@ -1,7 +1,7 @@
 import type { Landmark, GestureEntry, ClassificationResult } from '@/types'
 
 const POSE_DIM = 63
-const TEMPORAL_DIM = 315 // POSE_DIM × 5
+const TEMPORAL_DIM = 252 // POSE_DIM × 4
 
 // ── Normalização de landmarks ─────────────────────────────────────────────────
 
@@ -30,7 +30,7 @@ export function landmarksToVector(landmarks: Landmark[]): number[] {
 // ── Distância euclidiana ──────────────────────────────────────────────────────
 
 // O eixo z do MediaPipe é estimado por depth e varia muito entre pessoas/dispositivos.
-// Nos vetores de 63-dim (x,y,z intercalados) e 315-dim (5 blocos de 63), o z está
+// Nos vetores de 63-dim (x,y,z intercalados) e 252-dim (4 blocos de 63), o z está
 // em todo índice i onde i%3===2. Peso 0.5 reduz o impacto do z sem quebrar os dados gravados.
 function euclidean(a: number[], b: number[]): number {
   const len = Math.min(a.length, b.length)
@@ -45,16 +45,14 @@ function euclidean(a: number[], b: number[]): number {
 // ── Extração de features temporais ───────────────────────────────────────────
 
 /**
- * Converte um buffer de N frames (cada 63-dim) em um vetor temporal de 315 dims:
+ * Converte um buffer de N frames (cada 63-dim) em um vetor temporal de 252 dims:
  *   mean_pose (63)     — forma média da mão durante o gesto
  *   std_pose (63)      — variância por dimensão (≈0 em sinais estáticos)
  *   mean_velocity (63) — direção média do movimento frame a frame
  *   displacement (63)  — deslocamento líquido (último − primeiro frame)
- *   path_length (63)   — distância acumulada por dimensão (Σ|Δf|)
  *
- * path_length resolve o "cancelamento": movimentos circulares ou de ida-e-volta
- * têm displacement≈0 e mean_velocity≈0, mas path_length > 0, tornando-os
- * distinguíveis de sinais estáticos que também têm displacement≈0.
+ * Funciona para sinais estáticos (velocidade≈0) e dinâmicos (velocidade>0),
+ * permitindo um único KNN reconhecer ambos os tipos.
  */
 export function extractTemporalFeatures(buffer: number[][]): number[] {
   const N = buffer.length
@@ -70,19 +68,15 @@ export function extractTemporalFeatures(buffer: number[][]): number[] {
   for (let i = 0; i < POSE_DIM; i++) stdPose[i] = Math.sqrt(stdPose[i])
 
   const meanVelocity = new Array(POSE_DIM).fill(0)
-  const pathLength   = new Array(POSE_DIM).fill(0)
   if (N >= 2) {
     for (let f = 1; f < N; f++)
-      for (let i = 0; i < POSE_DIM; i++) {
-        const delta = buffer[f][i] - buffer[f - 1][i]
-        meanVelocity[i] += delta / (N - 1)
-        pathLength[i]   += Math.abs(delta)
-      }
+      for (let i = 0; i < POSE_DIM; i++)
+        meanVelocity[i] += (buffer[f][i] - buffer[f - 1][i]) / (N - 1)
   }
 
   const displacement = buffer[N - 1].map((v, i) => v - buffer[0][i])
 
-  return [...meanPose, ...stdPose, ...meanVelocity, ...displacement, ...pathLength]
+  return [...meanPose, ...stdPose, ...meanVelocity, ...displacement]
 }
 
 // ── Votação KNN com pesos por distância inversa ───────────────────────────────
@@ -131,15 +125,17 @@ export function knnClassify(
   k = 5,
   confidenceThreshold = 0.6,
   distThreshold = 1.2,   // z-damped: equivale a ~1.5 sem amortecimento
-  marginThreshold = 0.25 // gap mínimo entre 1º e 2º colocado — rejeita casos ambíguos
+  marginThreshold = 0.15 // gap mínimo entre 1º e 2º colocado — rejeita casos ambíguos
 ): ClassificationResult | null {
   if (gestures.length === 0) return null
 
   const neighbors: { dist: number; name: string }[] = []
   for (const gesture of gestures)
     for (const sample of gesture.samples)
-      neighbors.push({ dist: euclidean(vector, sample), name: gesture.name })
+      if (sample.length === vector.length)  // ignora amostras de formato incompatível
+        neighbors.push({ dist: euclidean(vector, sample), name: gesture.name })
 
+  if (neighbors.length === 0) return null
   neighbors.sort((a, b) => a.dist - b.dist)
   if (neighbors[0].dist > distThreshold) return null
 
@@ -158,7 +154,7 @@ export function knnClassify(
 // ── Classificador KNN temporal (buffer de frames) ─────────────────────────────
 
 /**
- * Classifica um buffer de N frames contra a biblioteca usando features temporais (315-dim).
+ * Classifica um buffer de N frames contra a biblioteca usando features temporais (252-dim).
  * Usa apenas gestos que têm `temporalVectors`. Retorna null se nenhum gesto qualificar.
  */
 export function temporalKnnClassify(
@@ -167,7 +163,7 @@ export function temporalKnnClassify(
   k = 5,
   confidenceThreshold = 0.6,
   distThreshold = 3.5,   // amplo o suficiente para variação entre pessoas diferentes
-  marginThreshold = 0.25 // gap mínimo entre 1º e 2º colocado — rejeita casos ambíguos
+  marginThreshold = 0.15 // gap mínimo entre 1º e 2º colocado — rejeita casos ambíguos
 ): ClassificationResult | null {
   const withTemporal = gestures.filter(g => g.temporalVectors && g.temporalVectors.length > 0)
   if (withTemporal.length === 0) return null
@@ -180,6 +176,7 @@ export function temporalKnnClassify(
       if (tvec.length === query.length)  // ignora vetores gravados com formato anterior
         neighbors.push({ dist: euclidean(query, tvec), name: gesture.name })
 
+  if (neighbors.length === 0) return null  // nenhum vetor compatível — cai no KNN estático
   neighbors.sort((a, b) => a.dist - b.dist)
   if (neighbors[0].dist > distThreshold) return null
 

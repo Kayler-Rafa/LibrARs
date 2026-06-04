@@ -36,7 +36,7 @@ export interface ApiGesture {
   id: string
   name: string
   samples: number[][]
-  temporal_features?: number[]   // vetor 315-dim pré-computado pelo backend
+  temporal_features?: number[]   // vetor 252-dim pré-computado pelo backend
   sample_count: number
   created_at: string
   updated_at?: string
