@@ -33,8 +33,9 @@ export function landmarksToVector(landmarks: Landmark[]): number[] {
 // Nos vetores de 63-dim (x,y,z intercalados) e 315-dim (5 blocos de 63), o z está
 // em todo índice i onde i%3===2. Peso 0.5 reduz o impacto do z sem quebrar os dados gravados.
 function euclidean(a: number[], b: number[]): number {
+  const len = Math.min(a.length, b.length)
   let sum = 0
-  for (let i = 0; i < a.length; i++) {
+  for (let i = 0; i < len; i++) {
     const d = (a[i] - b[i]) ** 2
     sum += (i % 3 === 2) ? d * 0.25 : d  // z com peso √0.25 = 0.5
   }
@@ -176,7 +177,8 @@ export function temporalKnnClassify(
 
   for (const gesture of withTemporal)
     for (const tvec of gesture.temporalVectors!)
-      neighbors.push({ dist: euclidean(query, tvec), name: gesture.name })
+      if (tvec.length === query.length)  // ignora vetores gravados com formato anterior
+        neighbors.push({ dist: euclidean(query, tvec), name: gesture.name })
 
   neighbors.sort((a, b) => a.dist - b.dist)
   if (neighbors[0].dist > distThreshold) return null
