@@ -6,6 +6,7 @@ from ..ml.classifier import weighted_knn
 from ..ml.compressor import compress_samples
 from ..ml.quality import filter_outliers
 from ..ml.temporal import extract_temporal_features
+from ..ml.body import frame_features, sample_with_body, body_temporal, pose_ratio
 from .schemas import GestureCreate, ClassifyRequest, CompressRequest, RecordingCreate
 
 router = APIRouter()
@@ -56,7 +57,8 @@ async def collective_dataset(_: dict = Depends(get_current_user)):
 
     # Item 1: a base coletiva agora vem das gravações (uma por repetição).
     rows = await db.fetch(
-        "SELECT gesture_name, sampled, temporal FROM gesture_recordings ORDER BY created_at DESC"
+        "SELECT gesture_name, sampled, temporal, sampled_body, temporal_body"
+        " FROM gesture_recordings ORDER BY created_at DESC"
     )
 
     agg: dict[str, dict] = {}
@@ -64,18 +66,30 @@ async def collective_dataset(_: dict = Depends(get_current_user)):
         name = r["gesture_name"]
         samples = _parse_jsonb(r["sampled"])
         temporal = _parse_jsonb(r["temporal"])
+        # Item 2: corpo alinhado amostra a amostra (null onde não há pose válida)
+        samples_body = _parse_jsonb(r["sampled_body"])
+        if len(samples_body) != len(samples):
+            samples_body = [None] * len(samples)
+        temporal_body = _parse_jsonb(r["temporal_body"]) or None
 
-        bucket = agg.setdefault(name, {"samples": [], "temporal_vectors": []})
-        if len(bucket["samples"]) < CAP_PER_NAME:
-            bucket["samples"].extend(samples[:CAP_PER_NAME - len(bucket["samples"])])
+        bucket = agg.setdefault(name, {
+            "samples": [], "samples_body": [], "temporal_vectors": [], "temporal_body": [],
+        })
+        room = CAP_PER_NAME - len(bucket["samples"])
+        if room > 0:
+            bucket["samples"].extend(samples[:room])
+            bucket["samples_body"].extend(samples_body[:room])
         if temporal:
             bucket["temporal_vectors"].append(temporal)
+            bucket["temporal_body"].append(temporal_body)
 
     return [
         {
             "name": name,
-            "samples": data["samples"][:CAP_PER_NAME],
+            "samples": data["samples"],
+            "samples_body": data["samples_body"],
             "temporal_vectors": data["temporal_vectors"],
+            "temporal_body": data["temporal_body"],
         }
         for name, data in agg.items()
     ]
@@ -198,21 +212,31 @@ async def create_recording(
             403, "É preciso aceitar o termo de consentimento antes de gravar."
         )
 
-    clean, _ = filter_outliers(body.frames)
-    sampled = compress_samples(clean, n_clusters=20)
+    # Item 2: corpo por quadro (pontos da pose + 10 features), alinhado a frames
+    body_frames = [b.model_dump() for b in body.body] if body.body else None
+    feats = frame_features(body_frames, len(body.frames))
+
+    # A forma da mão é amostrada como antes; o corpo acompanha cada amostra
+    sampled, sampled_body = sample_with_body(body.frames, feats, n_clusters=20)
     temporal = extract_temporal_features(body.frames)
+    temporal_body = body_temporal(feats)
+    # Fração de quadros com pose válida, medida no servidor a partir do que chegou
+    ratio = pose_ratio(feats) if body_frames else 0.0
 
     row = await db.fetchrow(
         """
         INSERT INTO gesture_recordings
             (user_id, gesture_name, frames, body, sampled, temporal,
+             sampled_body, temporal_body,
              hand_ratio, pose_ratio, source, app_version)
-        VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb, $7, $8, $9, $10)
+        VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb,
+                $7::jsonb, $8::jsonb, $9, $10, $11, $12)
         RETURNING id, created_at
         """,
         current_user["user_id"], gesture_name,
-        body.frames, body.body, sampled, temporal,
-        body.hand_ratio, body.pose_ratio, body.source, body.app_version,
+        body.frames, body_frames, sampled, temporal,
+        sampled_body, temporal_body,
+        body.hand_ratio, ratio, body.source, body.app_version,
     )
     return {
         "id": str(row["id"]),
@@ -220,9 +244,12 @@ async def create_recording(
         "created_at": row["created_at"].isoformat(),
         "sampled_count": len(sampled),
         "frame_count": len(body.frames),
+        "pose_ratio": ratio,
         # devolvidos para o classificador local reconhecer o gesto imediatamente
         "sampled": sampled,
         "temporal": temporal,
+        "sampled_body": sampled_body,
+        "temporal_body": temporal_body,
     }
 
 

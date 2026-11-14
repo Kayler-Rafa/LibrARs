@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { GestureEntry } from '@/types'
+import type { GestureEntry, BodyFrame } from '@/types'
 import { generateId } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { APP_VERSION } from '@/lib/consent'
@@ -11,7 +11,10 @@ interface GestureStore {
   collectiveGestures: GestureEntry[]  // base coletiva (todos os participantes) — só p/ classificação, não persiste
 
   addGesture: (name: string, samples: number[][]) => Promise<GestureEntry>
-  addRecording: (name: string, frames: number[][], handRatio: number) => Promise<void>
+  addRecording: (
+    name: string, frames: number[][], handRatio: number,
+    body?: BodyFrame[] | null, poseRatio?: number
+  ) => Promise<void>
   updateGesture: (id: string, updates: Partial<GestureEntry>) => void
   deleteGesture: (id: string) => Promise<void>
   retrySync: (id: string) => Promise<void>
@@ -93,12 +96,13 @@ export const useGestureStore = create<GestureStore>()(
       // Cada repetição vira uma gravação no backend (append-only). O backend
       // devolve sampled+temporal, que guardamos localmente para o classificador
       // reconhecer o gesto imediatamente, sem recarregar a base coletiva.
-      addRecording: async (name, frames, handRatio) => {
+      // Item 2: `body` leva, por quadro, os pontos da pose e as 10 features de corpo.
+      addRecording: async (name, frames, handRatio, body = null, poseRatio = 0) => {
         const saved = await api.gestures.createRecording(name, {
           frames,
-          body: null,
+          body,
           hand_ratio: handRatio,
-          pose_ratio: 0,
+          pose_ratio: poseRatio,
           source: 'manual',
           app_version: APP_VERSION,
         })
@@ -108,6 +112,8 @@ export const useGestureStore = create<GestureStore>()(
           name,
           samples: saved.sampled,
           temporalVectors: saved.temporal ? [saved.temporal] : undefined,
+          samplesBody: saved.sampled_body,
+          temporalBody: saved.temporal ? [saved.temporal_body ?? null] : undefined,
           sampleCount: saved.sampled_count,
           createdAt: saved.created_at || now,
           updatedAt: saved.created_at || now,
@@ -262,6 +268,8 @@ export const useGestureStore = create<GestureStore>()(
           name: d.name,
           samples: d.samples,
           temporalVectors: d.temporal_vectors ?? [],
+          samplesBody: d.samples_body,
+          temporalBody: d.temporal_body,
           sampleCount: d.samples.length,
           createdAt: now,
           updatedAt: now,

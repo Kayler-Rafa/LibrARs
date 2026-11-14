@@ -6,7 +6,14 @@ import {
   knnClassify,
   temporalKnnClassify,
 } from '@/lib/classifier'
-import type { Landmark } from '@/types'
+import {
+  computeBodyFeatures,
+  bodyTemporal,
+  BODY_WEIGHT,
+  POSE_WINDOW,
+  POSE_WINDOW_MIN_RATIO,
+} from '@/lib/body'
+import type { Landmark, PoseData } from '@/types'
 
 export interface HistoryEntry {
   gesture: string
@@ -19,6 +26,14 @@ export interface UseGestureClassifierReturn {
   isDetecting: boolean
   history: HistoryEntry[]
   currentPhrase: string
+  /** Item 2: o classificador está comparando forma + corpo (configuração B) */
+  bodyActive: boolean
+  /** Peso w do corpo na distância (0 quando só a forma é usada) */
+  bodyWeight: number
+  /** Fração dos últimos 30 quadros com pose válida; null sem rastreador de corpo */
+  poseOkRatio: number | null
+  /** true quando menos de metade dos últimos 30 quadros tem pose válida */
+  poseWarning: boolean
 }
 
 // Confirmação baseada em tempo — agnóstica ao FPS do dispositivo (mobile ~2–10fps, desktop ~30fps)
@@ -31,7 +46,10 @@ const PHRASE_RESET_MS = 3000
 const BUFFER_SIZE       = 15
 const SAMPLE_INTERVAL_MS = 100
 
-export function useGestureClassifier(landmarks: Landmark[] | null): UseGestureClassifierReturn {
+export function useGestureClassifier(
+  landmarks: Landmark[] | null,
+  pose: PoseData | null = null
+): UseGestureClassifierReturn {
   const ownGestures        = useGestureStore(s => s.gestures)
   const collectiveGestures = useGestureStore(s => s.collectiveGestures)
 
@@ -39,6 +57,20 @@ export function useGestureClassifier(landmarks: Landmark[] | null): UseGestureCl
     () => [...ownGestures, ...collectiveGestures],
     [ownGestures, collectiveGestures]
   )
+
+  // Item 2: o corpo só entra na distância se a biblioteca tiver vetores de corpo
+  const bodyActive = useMemo(
+    () => BODY_WEIGHT > 0 && gestures.some(g =>
+      g.samplesBody?.some(b => b !== null) || g.temporalBody?.some(b => b !== null)),
+    [gestures]
+  )
+  const bodyWeight = bodyActive ? BODY_WEIGHT : 0
+
+  // Corpo: buffer paralelo ao de forma + janela dos últimos quadros com/sem pose
+  const bodyBufferRef  = useRef<(number[] | null)[]>([])
+  const poseWindowRef  = useRef<boolean[]>([])
+  const [poseOkRatio, setPoseOkRatio] = useState<number | null>(null)
+  const [poseWarning, setPoseWarning] = useState(false)
 
   // ── Buffer rolante de vetores normalizados (amostrado a 100ms) ──────────────
   const frameBufferRef    = useRef<number[][]>([])
@@ -60,8 +92,20 @@ export function useGestureClassifier(landmarks: Landmark[] | null): UseGestureCl
   const [currentPhrase, setCurrentPhrase]   = useState('')
 
   useEffect(() => {
+    // Janela de enquadramento (só conta quando o rastreador de corpo está disponível)
+    if (pose) {
+      const win = poseWindowRef.current
+      win.push(pose.ok)
+      if (win.length > POSE_WINDOW) win.shift()
+      const ratio = win.filter(Boolean).length / win.length
+      setPoseOkRatio(Math.round(ratio * 100) / 100)
+      // espera meia janela antes de avisar, para não piscar ao abrir a câmera
+      setPoseWarning(win.length >= POSE_WINDOW / 2 && ratio < POSE_WINDOW_MIN_RATIO)
+    }
+
     if (!landmarks || landmarks.length !== 21 || gestures.length === 0) {
       frameBufferRef.current    = []
+      bodyBufferRef.current     = []
       candidateRef.current      = null
       lastConfirmedRef.current  = null
       lastConfirmTimeRef.current = 0
@@ -73,6 +117,7 @@ export function useGestureClassifier(landmarks: Landmark[] | null): UseGestureCl
 
     const now    = performance.now()
     const vector = landmarksToVector(normalizeLandmarks(landmarks))
+    const body   = bodyActive ? computeBodyFeatures(landmarks, pose) : null
 
     // Amostra o buffer a 100ms para coincidir com a taxa de gravação
     if (now - lastSampleTimeRef.current >= SAMPLE_INTERVAL_MS) {
@@ -81,15 +126,22 @@ export function useGestureClassifier(landmarks: Landmark[] | null): UseGestureCl
       frameBufferRef.current = buf.length >= BUFFER_SIZE
         ? [...buf.slice(1), vector]   // desliza a janela
         : [...buf, vector]
+      const bbuf = bodyBufferRef.current
+      bodyBufferRef.current = bbuf.length >= BUFFER_SIZE
+        ? [...bbuf.slice(1), body]
+        : [...bbuf, body]
     }
 
     const buf = frameBufferRef.current
     const bufferReady = buf.length >= Math.ceil(BUFFER_SIZE * 0.7) // 70% cheio (~1s)
 
     // Tenta classificação temporal primeiro; cai no estático se não disponível
+    // Com corpo: D = √(Dforma² + w·Dcorpo²); sem pose válida num dos lados, só a forma
+    const opts = { bodyWeight }
     const result = bufferReady
-      ? (temporalKnnClassify(buf, gestures) ?? knnClassify(vector, gestures))
-      : knnClassify(vector, gestures)
+      ? (temporalKnnClassify(buf, gestures, opts, bodyActive ? bodyTemporal(bodyBufferRef.current) : null)
+          ?? knnClassify(vector, gestures, opts, body))
+      : knnClassify(vector, gestures, opts, body)
 
     const usingTemporal = bufferReady && result !== null &&
       gestures.some(g => g.temporalVectors && g.temporalVectors.length > 0)
@@ -135,7 +187,7 @@ export function useGestureClassifier(landmarks: Landmark[] | null): UseGestureCl
         setCurrentGesture(null)
       }, PHRASE_RESET_MS)
     }
-  }, [landmarks, gestures])
+  }, [landmarks, pose, gestures, bodyActive, bodyWeight])
 
   useEffect(() => {
     return () => {
@@ -143,5 +195,8 @@ export function useGestureClassifier(landmarks: Landmark[] | null): UseGestureCl
     }
   }, [])
 
-  return { currentGesture, confidence, isDetecting, history, currentPhrase }
+  return {
+    currentGesture, confidence, isDetecting, history, currentPhrase,
+    bodyActive, bodyWeight, poseOkRatio, poseWarning,
+  }
 }

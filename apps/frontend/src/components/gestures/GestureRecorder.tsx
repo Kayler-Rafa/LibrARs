@@ -4,13 +4,16 @@ import { useGestureStore } from '@/stores/gestureStore'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/authStore'
 import { TERMO_VERSAO, CONSENT_LABEL } from '@/lib/consent'
-import type { Landmark } from '@/types'
+import { buildBodyFrame, POSE_RATIO_MIN } from '@/lib/body'
+import type { Landmark, PoseData, BodyFrame } from '@/types'
 import type { Handedness } from '@/hooks/useHandTracking'
 
 interface GestureRecorderProps {
   landmarks: Landmark[] | null
   isHandDetected: boolean
   handedness: Handedness | null
+  /** Item 2: pose (rosto + ombros) do quadro; null se o rastreador de corpo não está disponível */
+  pose?: PoseData | null
 }
 
 const MIN_SAMPLES      = 10
@@ -32,6 +35,7 @@ const COMMON_SIGNS = [
 
 interface RecordingQuality {
   coverage: number          // 0–1: % do tempo com mão detectada
+  poseRatio: number         // 0–1: % dos quadros gravados com rosto e ombros válidos (Item 2)
   handUsed: Handedness | null
   sampleCount: number
 }
@@ -62,7 +66,7 @@ function handLabel(h: Handedness | null): string {
 
 // ── Componente ────────────────────────────────────────────────────────────────
 
-export function GestureRecorder({ landmarks, isHandDetected, handedness }: GestureRecorderProps) {
+export function GestureRecorder({ landmarks, isHandDetected, handedness, pose = null }: GestureRecorderProps) {
   const [name, setName]               = useState('')
   const [isRecording, setIsRecording] = useState(false)
   const [sampleCount, setSampleCount] = useState(0)
@@ -73,6 +77,8 @@ export function GestureRecorder({ landmarks, isHandDetected, handedness }: Gestu
   const [rejectReason, setRejectReason] = useState<string | null>(null)
 
   const samplesRef          = useRef<number[][]>([])
+  // Item 2: corpo de cada quadro gravado (mesmo índice de samplesRef)
+  const bodyRef             = useRef<BodyFrame[]>([])
   const lastSampleTimeRef   = useRef(0)
   const recordingStartRef   = useRef(0)
   // Quantos intervalos de 100ms esperávamos ter amostra (= janelas em que a mão deveria estar visível)
@@ -145,11 +151,15 @@ export function GestureRecorder({ landmarks, isHandDetected, handedness }: Gestu
 
     const vector = landmarksToVector(normalizeLandmarks(landmarks))
     samplesRef.current.push(vector)
+    bodyRef.current.push(buildBodyFrame(landmarks, pose))
     setSampleCount(samplesRef.current.length)
-  }, [landmarks, isRecording, handedness])
+    // `pose` chega junto com `landmarks` (mesma renderização); o intervalo de
+    // 100 ms acima impede amostrar duas vezes o mesmo quadro
+  }, [landmarks, pose, isRecording, handedness])
 
   const startRecording = useCallback(() => {
     samplesRef.current       = []
+    bodyRef.current          = []
     expectedSlotsRef.current = 0
     detectedSlotsRef.current = 0
     handednessCountRef.current = { Left: 0, Right: 0 }
@@ -173,13 +183,17 @@ export function GestureRecorder({ landmarks, isHandDetected, handedness }: Gestu
       Left === 0 && Right === 0 ? null :
       Left > Right ? 'Left' : 'Right'
 
-    setQuality({ coverage, handUsed: dominant, sampleCount: samplesRef.current.length })
+    const body = bodyRef.current
+    const poseRatio = body.length > 0 ? body.filter(b => b.pose_ok).length / body.length : 0
+
+    setQuality({ coverage, poseRatio, handUsed: dominant, sampleCount: samplesRef.current.length })
   }, [])
 
   const save = useCallback(async () => {
     const trimmed = name.trim()
     const frames = samplesRef.current
     const handRatio = quality?.coverage ?? 0
+    const poseRatio = quality?.poseRatio ?? 0
 
     // Validações do Item 1 (mostram o motivo da rejeição)
     if (!trimmed) {
@@ -193,15 +207,26 @@ export function GestureRecorder({ landmarks, isHandDetected, handedness }: Gestu
       setRejectReason(`Mão detectada em só ${Math.round(handRatio * 100)}% dos quadros (mínimo ${Math.round(HAND_RATIO_MIN * 100)}%). Centralize a mão e regrave.`)
       setFeedback('error'); return
     }
+    // Item 2: sem rosto e ombros em pelo menos 80% dos quadros, a gravação não entra
+    if (poseRatio < POSE_RATIO_MIN) {
+      setRejectReason(
+        pose === null
+          ? 'Enquadre rosto e ombros. O rastreador de corpo ainda não carregou — aguarde alguns segundos (ou recarregue a página) e regrave.'
+          : `Enquadre rosto e ombros. Eles apareceram em só ${Math.round(poseRatio * 100)}% dos quadros (mínimo ${Math.round(POSE_RATIO_MIN * 100)}%). Afaste-se um pouco da câmera e regrave.`
+      )
+      setFeedback('error'); return
+    }
 
     const captured = [...frames]
+    const capturedBody = [...bodyRef.current]
     setRejectReason(null)
     samplesRef.current = []
+    bodyRef.current = []
     setSampleCount(0)
     setQuality(null)
     setFeedback('saving')
     try {
-      await addRecording(trimmed, captured, handRatio)
+      await addRecording(trimmed, captured, handRatio, capturedBody, poseRatio)
       setRepCount(c => c + 1)              // conta a repetição
       setFeedback('saved')
       setTimeout(() => setFeedback(null), 2500)
@@ -210,7 +235,7 @@ export function GestureRecorder({ landmarks, isHandDetected, handedness }: Gestu
       setFeedback('sync-error')
       setTimeout(() => setFeedback(null), 6000)
     }
-  }, [name, quality, addRecording])
+  }, [name, quality, pose, addRecording])
 
   const selectQuick = (label: string) => { if (!isRecording) setName(label) }
 
@@ -345,6 +370,13 @@ export function GestureRecorder({ landmarks, isHandDetected, handedness }: Gestu
         </div>
       )}
 
+      {/* Aviso: rosto e ombros fora do quadro (Item 2) */}
+      {hasConsent && pose && !pose.ok && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          🧍 Enquadre rosto e ombros — a gravação só é salva com eles visíveis
+        </p>
+      )}
+
       {/* Aviso: sem mão */}
       {!isHandDetected && !isRecording && (
         <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
@@ -404,6 +436,17 @@ export function GestureRecorder({ landmarks, isHandDetected, handedness }: Gestu
             </div>
             <p className={`text-xs leading-relaxed ${lbl.color} opacity-90 mb-3`}>{lbl.detail}</p>
 
+            {/* Enquadramento do corpo (Item 2) */}
+            <div className={`flex items-center gap-2 text-xs rounded-lg px-3 py-2 mb-2 ${
+              quality.poseRatio >= POSE_RATIO_MIN ? 'text-gray-600 bg-white/60' : 'text-red-700 bg-red-50 border border-red-200'
+            }`}>
+              <span>🧍</span>
+              <span>
+                Rosto e ombros em <strong>{Math.round(quality.poseRatio * 100)}%</strong> dos quadros
+                {quality.poseRatio < POSE_RATIO_MIN && ` — mínimo ${Math.round(POSE_RATIO_MIN * 100)}%. Enquadre rosto e ombros e regrave.`}
+              </span>
+            </div>
+
             {/* Lateralidade */}
             <div className="flex items-center gap-2 text-xs text-gray-600 bg-white/60 rounded-lg px-3 py-2">
               <span>✋</span>
@@ -411,7 +454,7 @@ export function GestureRecorder({ landmarks, isHandDetected, handedness }: Gestu
               <span className="text-gray-400 ml-1">— gravar com ambas as mãos aumenta a precisão</span>
             </div>
 
-            {quality.coverage < 0.75 && (
+            {(quality.coverage < 0.75 || quality.poseRatio < POSE_RATIO_MIN) && (
               <button
                 onClick={startRecording}
                 disabled={!isHandDetected}

@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import type { Results } from '@/types/mediapipe'
 import { getHandsInstance, sendFrame, handsReady } from '@/lib/mediapipe'
-import type { Landmark } from '@/types'
+import { initPose, poseReady, detectPose } from '@/lib/pose'
+import type { Landmark, PoseData } from '@/types'
+
+// Item 2: a pose roda a cada 2 quadros processados; o último resultado é reaproveitado
+const POSE_EVERY_N_FRAMES = 2
 
 export type Handedness = 'Left' | 'Right'
 
@@ -11,6 +15,8 @@ export interface UseHandTrackingReturn {
   isHandDetected: boolean
   isModelReady: boolean
   fps: number
+  /** Pose do quadro (rosto + ombros). null enquanto o rastreador de corpo não está disponível. */
+  pose: PoseData | null
 }
 
 export function useHandTracking(
@@ -21,12 +27,15 @@ export function useHandTracking(
   const processingRef = useRef(false)
   const lastFpsTimeRef = useRef(performance.now())
   const frameCountRef = useRef(0)
+  const frameIndexRef = useRef(0)
+  const poseRef = useRef<PoseData | null>(null)
 
   const [landmarks, setLandmarks]     = useState<Landmark[] | null>(null)
   const [handedness, setHandedness]   = useState<Handedness | null>(null)
   const [isHandDetected, setIsHandDetected] = useState(false)
   const [isModelReady, setIsModelReady]     = useState(false)
   const [fps, setFps] = useState(0)
+  const [pose, setPose] = useState<PoseData | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -46,6 +55,9 @@ export function useHandTracking(
         setHandedness(null)
         setIsHandDetected(false)
       }
+      // Publica a pose junto com a mão (mesma renderização). Se a pose não rodou
+      // neste quadro, o objeto é o mesmo e o React não renderiza de novo.
+      setPose(poseRef.current)
 
       frameCountRef.current++
       const now = performance.now()
@@ -56,9 +68,13 @@ export function useHandTracking(
       }
     }
 
-    getHandsInstance(onResults).then(() => {
+    const handsLoaded = getHandsInstance(onResults)
+    handsLoaded.then(() => {
       if (!cancelled) setIsModelReady(true)
     })
+    // A pose só carrega DEPOIS do rastreador de mãos (ver lib/pose.ts: as duas
+    // bibliotecas disputam uma variável global). Se falhar, o app segue só com a mão.
+    void initPose(handsLoaded)
 
     return () => {
       cancelled = true
@@ -72,6 +88,10 @@ export function useHandTracking(
 
     if (video && !processingRef.current && video.readyState >= 2 && handsReady()) {
       processingRef.current = true
+      // Pose antes da mão, para os dois resultados chegarem juntos ao onResults
+      if (poseReady() && frameIndexRef.current++ % POSE_EVERY_N_FRAMES === 0) {
+        poseRef.current = detectPose(video)
+      }
       await sendFrame(video)
     }
 
@@ -85,5 +105,5 @@ export function useHandTracking(
     return () => cancelAnimationFrame(animFrameRef.current)
   }, [isVideoReady, isModelReady, detect])
 
-  return { landmarks, handedness, isHandDetected, isModelReady, fps }
+  return { landmarks, handedness, isHandDetected, isModelReady, fps, pose }
 }

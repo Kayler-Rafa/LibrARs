@@ -1,3 +1,4 @@
+import type { BodyFrame } from '@/types'
 const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? ''
 
 function token(): string | null {
@@ -179,18 +180,29 @@ export const api = {
       req<ApiGesture[]>(`/api/gestures/user/${userId}`),
 
     collectiveDataset: () =>
-      req<Array<{ name: string; samples: number[][]; temporal_vectors?: number[][] }>>('/api/gestures/dataset'),
+      req<Array<{
+        name: string
+        samples: number[][]
+        temporal_vectors?: number[][]
+        samples_body?: (number[] | null)[]    // Item 2: corpo de cada amostra (null = sem pose)
+        temporal_body?: (number[] | null)[]   // Item 2: corpo temporal de cada vetor temporal
+      }>>('/api/gestures/dataset'),
 
     // Item 1 — gravações (uma por repetição)
     createRecording: (name: string, data: {
       frames: number[][]
-      body?: number[][] | null
+      body?: BodyFrame[] | null     // Item 2: pose + features por quadro (alinhado a frames)
       hand_ratio: number
       pose_ratio?: number
       source?: 'manual' | 'segmentado'
       app_version?: string
     }) =>
-      req<{ id: string; gesture_name: string; created_at: string; sampled_count: number; frame_count: number; sampled: number[][]; temporal: number[] }>(
+      req<{
+        id: string; gesture_name: string; created_at: string
+        sampled_count: number; frame_count: number; pose_ratio?: number
+        sampled: number[][]; temporal: number[]
+        sampled_body?: (number[] | null)[]; temporal_body?: number[] | null
+      }>(
         `/api/gestures/${encodeURIComponent(name)}/recordings`,
         { method: 'POST', body: JSON.stringify(data) }
       ),

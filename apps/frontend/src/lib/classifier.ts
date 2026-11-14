@@ -117,38 +117,99 @@ function inverseDistanceVote(
   return { winner, confidence, runnerUpConf, avgWinnerDist }
 }
 
-// ── Classificador KNN estático (frame único, fallback) ────────────────────────
+// ── Distância com referência corporal (Item 2) ───────────────────────────────
 
-export function knnClassify(
-  vector: number[],
-  gestures: GestureEntry[],
-  k = 5,
-  confidenceThreshold = 0.6,
-  distThreshold = 1.2,   // z-damped: equivale a ~1.5 sem amortecimento
-  marginThreshold = 0.15 // gap mínimo entre 1º e 2º colocado — rejeita casos ambíguos
+/**
+ * Limiares de distância máxima.
+ * `shape` são os valores calibrados para a forma da mão (não mudam).
+ * `body` é a folga extra (em larguras de ombro) aceita quando o par é comparado
+ * também pelo corpo: limite = √(shape² + w·body²). São valores PROVISÓRIOS — a
+ * especificação pede recalibrar com os dados da coleta.
+ */
+const DIST_STATIC   = { shape: 1.2, body: 1.0 }   // z-damped: 1.2 equivale a ~1.5 sem amortecimento
+const DIST_TEMPORAL = { shape: 3.5, body: 1.5 }   // amplo o suficiente para variação entre pessoas
+
+function plainEuclideanSq(a: number[], b: number[]): number {
+  let sum = 0
+  for (let i = 0; i < a.length; i++) sum += (a[i] - b[i]) ** 2
+  return sum
+}
+
+/**
+ * D = √(Dforma² + w·Dcorpo²).
+ * Quando um dos dois lados não tem corpo válido (ou w = 0), usa só a forma.
+ */
+export function combinedDistance(
+  shapeDist: number,
+  bodyA: number[] | null | undefined,
+  bodyB: number[] | null | undefined,
+  w: number
+): { dist: number; usedBody: boolean } {
+  if (w <= 0 || !bodyA || !bodyB || bodyA.length !== bodyB.length)
+    return { dist: shapeDist, usedBody: false }
+  return { dist: Math.sqrt(shapeDist ** 2 + w * plainEuclideanSq(bodyA, bodyB)), usedBody: true }
+}
+
+interface Neighbor { dist: number; name: string; usedBody: boolean }
+
+export interface KnnOptions {
+  k?: number
+  confidenceThreshold?: number
+  distThreshold?: number     // limite para a distância de forma
+  marginThreshold?: number   // gap mínimo entre 1º e 2º colocado — rejeita casos ambíguos
+  bodyWeight?: number        // w; 0 = só forma (configuração A)
+}
+
+function decide(
+  neighbors: Neighbor[],
+  limits: { shape: number; body: number },
+  opts: KnnOptions
 ): ClassificationResult | null {
-  if (gestures.length === 0) return null
-
-  const neighbors: { dist: number; name: string }[] = []
-  for (const gesture of gestures)
-    for (const sample of gesture.samples)
-      if (sample.length === vector.length)  // ignora amostras de formato incompatível
-        neighbors.push({ dist: euclidean(vector, sample), name: gesture.name })
+  const { k = 5, confidenceThreshold = 0.6, marginThreshold = 0.15, bodyWeight = 0 } = opts
+  const shapeLimit = opts.distThreshold ?? limits.shape
 
   if (neighbors.length === 0) return null
   neighbors.sort((a, b) => a.dist - b.dist)
-  if (neighbors[0].dist > distThreshold) return null
+
+  const nearest = neighbors[0]
+  const limit = nearest.usedBody
+    ? Math.sqrt(shapeLimit ** 2 + bodyWeight * limits.body ** 2)
+    : shapeLimit
+  if (nearest.dist > limit) return null
 
   const result = inverseDistanceVote(neighbors, k)
   if (!result) return null
 
   const { winner, confidence, runnerUpConf, avgWinnerDist } = result
-  const margin = confidence - runnerUpConf
-
   if (confidence < confidenceThreshold) return null
-  if (margin < marginThreshold) return null
+  if (confidence - runnerUpConf < marginThreshold) return null
 
-  return { name: winner, confidence, dist: avgWinnerDist }
+  return { name: winner, confidence, dist: avgWinnerDist, usedBody: nearest.usedBody }
+}
+
+// ── Classificador KNN estático (frame único, fallback) ────────────────────────
+
+/**
+ * @param body features de corpo (10) do quadro atual — null/ausente = só forma
+ */
+export function knnClassify(
+  vector: number[],
+  gestures: GestureEntry[],
+  opts: KnnOptions = {},
+  body?: number[] | null
+): ClassificationResult | null {
+  if (gestures.length === 0) return null
+  const w = opts.bodyWeight ?? 0
+
+  const neighbors: Neighbor[] = []
+  for (const gesture of gestures)
+    gesture.samples.forEach((sample, i) => {
+      if (sample.length !== vector.length) return  // ignora amostras de formato incompatível
+      const d = combinedDistance(euclidean(vector, sample), body, gesture.samplesBody?.[i], w)
+      neighbors.push({ ...d, name: gesture.name })
+    })
+
+  return decide(neighbors, DIST_STATIC, opts)
 }
 
 // ── Classificador KNN temporal (buffer de frames) ─────────────────────────────
@@ -156,38 +217,29 @@ export function knnClassify(
 /**
  * Classifica um buffer de N frames contra a biblioteca usando features temporais (252-dim).
  * Usa apenas gestos que têm `temporalVectors`. Retorna null se nenhum gesto qualificar.
+ *
+ * @param bodyTemporalVec vetor temporal do corpo (40) do mesmo buffer — null/ausente = só forma
  */
 export function temporalKnnClassify(
   buffer: number[][],
   gestures: GestureEntry[],
-  k = 5,
-  confidenceThreshold = 0.6,
-  distThreshold = 3.5,   // amplo o suficiente para variação entre pessoas diferentes
-  marginThreshold = 0.15 // gap mínimo entre 1º e 2º colocado — rejeita casos ambíguos
+  opts: KnnOptions = {},
+  bodyTemporalVec?: number[] | null
 ): ClassificationResult | null {
   const withTemporal = gestures.filter(g => g.temporalVectors && g.temporalVectors.length > 0)
   if (withTemporal.length === 0) return null
+  const w = opts.bodyWeight ?? 0
 
   const query = extractTemporalFeatures(buffer)
-  const neighbors: { dist: number; name: string }[] = []
+  const neighbors: Neighbor[] = []
 
   for (const gesture of withTemporal)
-    for (const tvec of gesture.temporalVectors!)
-      if (tvec.length === query.length)  // ignora vetores gravados com formato anterior
-        neighbors.push({ dist: euclidean(query, tvec), name: gesture.name })
+    gesture.temporalVectors!.forEach((tvec, i) => {
+      if (tvec.length !== query.length) return  // ignora vetores gravados com formato anterior
+      const d = combinedDistance(euclidean(query, tvec), bodyTemporalVec, gesture.temporalBody?.[i], w)
+      neighbors.push({ ...d, name: gesture.name })
+    })
 
-  if (neighbors.length === 0) return null  // nenhum vetor compatível — cai no KNN estático
-  neighbors.sort((a, b) => a.dist - b.dist)
-  if (neighbors[0].dist > distThreshold) return null
-
-  const result = inverseDistanceVote(neighbors, k)
-  if (!result) return null
-
-  const { winner, confidence, runnerUpConf, avgWinnerDist } = result
-  const margin = confidence - runnerUpConf
-
-  if (confidence < confidenceThreshold) return null
-  if (margin < marginThreshold) return null
-
-  return { name: winner, confidence, dist: avgWinnerDist }
+  // nenhum vetor compatível → null (o chamador cai no KNN estático)
+  return decide(neighbors, DIST_TEMPORAL, opts)
 }

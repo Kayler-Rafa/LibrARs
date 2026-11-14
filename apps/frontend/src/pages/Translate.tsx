@@ -5,10 +5,12 @@ import { EvaluationPanel } from '@/components/evaluation/EvaluationPanel'
 import { useGestureClassifier } from '@/hooks/useGestureClassifier'
 import { useGestureStore } from '@/stores/gestureStore'
 import { Link } from 'react-router-dom'
-import type { Landmark } from '@/types'
+import type { Landmark, PoseData } from '@/types'
+import type { Handedness } from '@/hooks/useHandTracking'
 
 export default function Translate() {
   const [landmarks, setLandmarks] = useState<Landmark[] | null>(null)
+  const [pose, setPose] = useState<PoseData | null>(null)
   const gestureCount = useGestureStore(s => s.gestures.length + s.collectiveGestures.length)
   const ownGestures = useGestureStore(s => s.gestures)
   const collectiveGestures = useGestureStore(s => s.collectiveGestures)
@@ -20,12 +22,18 @@ export default function Translate() {
     [ownGestures, collectiveGestures]
   )
 
-  const handleLandmarks = useCallback((lms: Landmark[] | null, _detected: boolean) => {
-    setLandmarks(lms)
-  }, [])
+  const handleLandmarks = useCallback(
+    (lms: Landmark[] | null, _detected: boolean, _hand: Handedness | null, ps: PoseData | null) => {
+      setLandmarks(lms)
+      setPose(ps)
+    },
+    []
+  )
 
-  const { currentGesture, confidence, isDetecting, history, currentPhrase } =
-    useGestureClassifier(landmarks)
+  const {
+    currentGesture, confidence, isDetecting, history, currentPhrase,
+    bodyActive, bodyWeight, poseOkRatio, poseWarning,
+  } = useGestureClassifier(landmarks, pose)
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-6 flex flex-col gap-6">
@@ -56,8 +64,22 @@ export default function Translate() {
         />
       </CameraFeed>
 
+      {/* Item 2: sem rosto e ombros o classificador perde a referência corporal */}
+      {poseWarning && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800 text-center" role="status">
+          🧍 <strong>Enquadre rosto e ombros</strong> — afaste-se um pouco da câmera para o reconhecimento usar a posição da mão no corpo.
+        </div>
+      )}
+
       {/* Modo avaliação (Item 4): registra cada tentativa — gesto pedido × reconhecido */}
-      <EvaluationPanel history={history} confidence={confidence} vocabulary={vocabulary} />
+      <EvaluationPanel
+        history={history}
+        confidence={confidence}
+        vocabulary={vocabulary}
+        config={bodyActive ? 'B' : 'A'}
+        bodyWeight={bodyActive ? bodyWeight : null}
+        poseOkRatio={poseOkRatio}
+      />
 
       {/* Modo frase */}
       {currentPhrase && (

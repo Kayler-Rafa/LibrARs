@@ -17,7 +17,6 @@ import type { HistoryEntry } from '@/hooks/useGestureClassifier'
 
 const PREPARE_MS = 2000   // pausa entre tentativas (o participante abaixa a mão)
 const TIMEOUT_MS = 8000   // sem reconhecimento nesse tempo → tentativa rejeitada
-const CONFIG = 'A'        // configuração do classificador em uso (linha de base: só forma da mão)
 
 type Phase = 'closed' | 'setup' | 'prepare' | 'listening' | 'done'
 
@@ -34,6 +33,12 @@ interface EvaluationPanelProps {
   history: HistoryEntry[]     // confirmações do classificador (mais recente primeiro)
   confidence: number          // confiança da confirmação mais recente
   vocabulary: string[]        // gestos disponíveis para reconhecimento
+  /** Configuração do classificador em uso: A = só forma da mão; B = forma + corpo (Item 2) */
+  config?: string
+  /** Peso w do corpo na distância (null na configuração A) */
+  bodyWeight?: number | null
+  /** Fração dos últimos quadros com pose válida (null sem rastreador de corpo) */
+  poseOkRatio?: number | null
 }
 
 function shuffle<T>(items: T[]): T[] {
@@ -45,7 +50,10 @@ function shuffle<T>(items: T[]): T[] {
   return a
 }
 
-export function EvaluationPanel({ history, confidence, vocabulary }: EvaluationPanelProps) {
+export function EvaluationPanel({
+  history, confidence, vocabulary,
+  config = 'A', bodyWeight = null, poseOkRatio = null,
+}: EvaluationPanelProps) {
   const user = useAuthStore(s => s.user)
   const isAdmin = user?.role === 'admin'
 
@@ -69,8 +77,8 @@ export function EvaluationPanel({ history, confidence, vocabulary }: EvaluationP
   const historyRef = useRef(history); historyRef.current = history
   const confidenceRef = useRef(confidence); confidenceRef.current = confidence
   const phaseRef = useRef(phase); phaseRef.current = phase
-  const runRef = useRef({ order, index, sessionId, evaluatedId, onBehalf })
-  runRef.current = { order, index, sessionId, evaluatedId, onBehalf }
+  const runRef = useRef({ order, index, sessionId, evaluatedId, onBehalf, config, bodyWeight, poseOkRatio })
+  runRef.current = { order, index, sessionId, evaluatedId, onBehalf, config, bodyWeight, poseOkRatio }
   const t0Ref = useRef(0)
   const baselineRef = useRef<HistoryEntry | null>(null)
   const attemptClosedRef = useRef(true)
@@ -111,9 +119,9 @@ export function EvaluationPanel({ history, confidence, vocabulary }: EvaluationP
       confidence: predicted ? conf : null,
       latency_ms: latency,
       segment_frames: null,   // passa a ser preenchido com a segmentação (item 3)
-      pose_ok_ratio: null,    // passa a ser preenchido com a pose (item 2)
-      config: CONFIG,
-      w: null,
+      pose_ok_ratio: run.poseOkRatio,   // enquadramento no fim da tentativa (item 2)
+      config: run.config,               // A = só forma; B = forma + corpo
+      w: run.bodyWeight,
       app_version: APP_VERSION,
       user_id: run.onBehalf ? run.evaluatedId : null,
     })

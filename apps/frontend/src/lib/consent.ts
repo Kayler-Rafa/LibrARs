@@ -8,4 +8,4 @@ export const CONSENT_LABEL =
   'Aceito doar os pontos do meu corpo e das mãos (números, não vídeo) para a pesquisa'
 
 // Versão do frontend registrada nas gravações e tentativas
-export const APP_VERSION = 'web-item4'
+export const APP_VERSION = 'web-item2'

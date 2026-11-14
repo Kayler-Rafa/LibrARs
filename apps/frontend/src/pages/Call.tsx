@@ -7,7 +7,8 @@ import { useGestureClassifier } from '@/hooks/useGestureClassifier'
 import { useSpeechRecognition } from '@/hooks/useSpeechRecognition'
 import { useAuthStore } from '@/stores/authStore'
 import { useGestureStore } from '@/stores/gestureStore'
-import type { Landmark } from '@/types'
+import type { Landmark, PoseData } from '@/types'
+import type { Handedness } from '@/hooks/useHandTracking'
 import { generateId } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { FeedbackModal } from '@/components/feedback/FeedbackModal'
@@ -88,8 +89,16 @@ export default function Call() {
 
   // Classificador de gestos local
   const [landmarks, setLandmarks] = useState<Landmark[] | null>(null)
-  const handleLandmarks = useCallback((lms: Landmark[] | null) => setLandmarks(lms), [])
-  const { currentGesture, confidence, isDetecting } = useGestureClassifier(landmarks)
+  // Item 2: a pose entra no classificador da chamada do mesmo jeito que no Traduzir
+  const [pose, setPose] = useState<PoseData | null>(null)
+  const handleLandmarks = useCallback(
+    (lms: Landmark[] | null, _detected: boolean, _hand: Handedness | null, ps: PoseData | null) => {
+      setLandmarks(lms)
+      setPose(ps)
+    },
+    []
+  )
+  const { currentGesture, confidence, isDetecting } = useGestureClassifier(landmarks, pose)
 
   // STT — transcreve fala e envia ao par
   const handleFinalSpeech = useCallback((text: string) => {

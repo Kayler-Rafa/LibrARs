@@ -155,6 +155,11 @@ async def run_migrations():
         )
         """,
 
+        # Item 2 — referência corporal: vetores de corpo alinhados a sampled/temporal
+        # (null nas gravações sem pose; os vetores de forma não mudam de formato)
+        "ALTER TABLE gesture_recordings ADD COLUMN IF NOT EXISTS sampled_body JSONB",
+        "ALTER TABLE gesture_recordings ADD COLUMN IF NOT EXISTS temporal_body JSONB",
+
         # Item 4 — consentimento (data/hora do aceite e versão do termo)
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS consent_at TIMESTAMPTZ",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS consent_version TEXT",

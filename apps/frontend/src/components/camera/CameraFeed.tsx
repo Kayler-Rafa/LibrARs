@@ -2,11 +2,17 @@ import { useEffect } from 'react'
 import { useCamera } from '@/hooks/useCamera'
 import { useHandTracking } from '@/hooks/useHandTracking'
 import { CanvasOverlay } from './CanvasOverlay'
-import type { Landmark } from '@/types'
+import type { Landmark, PoseData } from '@/types'
 import type { Handedness } from '@/hooks/useHandTracking'
 
 interface CameraFeedProps {
-  onLandmarks?: (landmarks: Landmark[] | null, isHandDetected: boolean, handedness: Handedness | null) => void
+  onLandmarks?: (
+    landmarks: Landmark[] | null,
+    isHandDetected: boolean,
+    handedness: Handedness | null,
+    /** Item 2: pose (rosto + ombros) do quadro; null se o rastreador de corpo não está disponível */
+    pose: PoseData | null
+  ) => void
   /** Conteúdo renderizado dentro do container do vídeo (ex: ARDisplay) */
   children?: React.ReactNode
 }
@@ -42,13 +48,13 @@ function StatusBadge({
 
 export function CameraFeed({ onLandmarks, children }: CameraFeedProps) {
   const { videoRef, isReady, error, facingMode, toggleCamera, aspectRatio } = useCamera()
-  const { landmarks, handedness, isHandDetected, isModelReady, fps } = useHandTracking(videoRef, isReady)
+  const { landmarks, handedness, isHandDetected, isModelReady, fps, pose } = useHandTracking(videoRef, isReady)
 
   const mirrored = facingMode === 'user'
 
   useEffect(() => {
-    onLandmarks?.(landmarks, isHandDetected, handedness)
-  }, [landmarks, isHandDetected, handedness, onLandmarks])
+    onLandmarks?.(landmarks, isHandDetected, handedness, pose)
+  }, [landmarks, isHandDetected, handedness, pose, onLandmarks])
 
   return (
     <div className="w-full max-w-2xl mx-auto flex flex-col gap-3">
@@ -75,7 +81,7 @@ export function CameraFeed({ onLandmarks, children }: CameraFeedProps) {
           aria-label="Feed da câmera"
         />
 
-        <CanvasOverlay landmarks={landmarks} mirrored={mirrored} />
+        <CanvasOverlay landmarks={landmarks} pose={pose} mirrored={mirrored} />
 
         {/* Slot para overlays externos (ex: ARDisplay) */}
         {children}
@@ -108,6 +114,13 @@ export function CameraFeed({ onLandmarks, children }: CameraFeedProps) {
               active={isHandDetected}
               label={isHandDetected ? 'Mão detectada' : 'Nenhuma mão'}
               color={isHandDetected ? 'green' : 'gray'}
+            />
+          )}
+          {isModelReady && pose && (
+            <StatusBadge
+              active={pose.ok}
+              label={pose.ok ? 'Rosto e ombros ok' : 'Enquadre rosto e ombros'}
+              color={pose.ok ? 'green' : 'yellow'}
             />
           )}
         </div>
